@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第一关 v18</title>
+<title>迷你高尔夫 第一关 V19</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#123b22;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;touch-action:none}
 canvas{display:block;width:100vw;height:100dvh;touch-action:none}
@@ -22,9 +22,8 @@ canvas{display:block;width:100vw;height:100dvh;touch-action:none}
 const c=document.getElementById('c'),g=c.getContext('2d'),N=document.getElementById('n'),M=document.getElementById('msg');
 let W,H,D=1,strokes=0,won=false,drag=false,px=0,py=0;
 let showFlag=true,fullStraightShot=false,crossedCupFast=false,topWallAfterFast=false;
-let cupMode='free', cupTurn=1, cupEntrySpeed=0, cupCommitted=false;
-let cupArc=0, cupLastAngle=0, dropFrames=0, dropStartX=0, dropStartY=0, dropVX=0, dropVY=0;
-let ball={x:0,y:0,r:10,vx:0,vy:0},hole={x:0,y:0,r:25.3};
+let cupMode='free', cupTurn=1, cupEntrySpeed=0;
+let ball={x:0,y:0,r:10,vx:0,vy:0,z:0,vz:0,alpha:1,scale:1},hole={x:0,y:0,r:25.3};
 const MAX_PULL=175, POWER=.092, FRICTION=.987, STOP=.025;
 const CUP_ENTRY_DRAG=.982;            // shallow contact: modest loss
 const CUP_ORBIT_DRAG=.955;            // while riding the lip: strong loss
@@ -51,7 +50,7 @@ function reset(full=true){
  ball.y=H-BOTTOM_SAFE-1.5*ball.r;
  ball.vx=ball.vy=0;drag=false;won=false;
  showFlag=true;fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;
- cupMode='free';cupEntrySpeed=0;cupCommitted=false;cupArc=0;cupLastAngle=0;dropFrames=0;
+ cupMode='free';cupEntrySpeed=0;ball.z=0;ball.vz=0;ball.alpha=1;ball.scale=1;
  M.textContent='';
  if(full){strokes=0;N.textContent='0'}
 }
@@ -96,182 +95,132 @@ function sink(){
 }
 
 
-function startFastDrop(bounceToCenter=false){
-  cupMode='drop';dropFrames=0;
-  dropStartX=ball.x;dropStartY=ball.y;
-  // Keep a trace of real incoming momentum. A very slow lip touch redirects inward,
-  // but gravity now dominates the visible motion instead of creating a slow orbit.
-  const dx=hole.x-ball.x,dy=hole.y-ball.y,d=Math.hypot(dx,dy)||1;
-  const inwardX=dx/d,inwardY=dy/d;
-  if(bounceToCenter){
-    dropVX=ball.vx*.22+inwardX*1.15;
-    dropVY=ball.vy*.22+inwardY*1.15;
-  }else{
-    dropVX=ball.vx*.28;dropVY=ball.vy*.28;
-  }
-  ball.vx=ball.vy=0;
+function beginDrop(){
+  if(cupMode==='drop')return;
+  cupMode='drop';
+  ball.z=0;ball.vz=.55;
 }
-
 function dropPhysics(){
-  if(cupMode!=='drop')return false;
-  dropFrames++;
-  // 10–14 frames at 60 fps: visually quick, like support suddenly disappearing.
-  // Horizontal motion dies rapidly; apparent vertical fall accelerates by shrinking the ball.
-  const t=Math.min(1,dropFrames/12);
-  const ease=t*t;
-  ball.x+=dropVX*(1-t)*.72;
-  ball.y+=dropVY*(1-t)*.72;
-  ball.x+=(hole.x-ball.x)*(.08+.18*ease);
-  ball.y+=(hole.y-ball.y)*(.08+.18*ease);
-  if(t>=1){sink();cupMode='free';return true;}
+  // Horizontal momentum survives briefly while gravity rapidly takes over vertically.
+  ball.x+=ball.vx;ball.y+=ball.vy;
+  ball.vx*=.90;ball.vy*=.90;
+  ball.vz+=.34;ball.z+=ball.vz;
+  const t=Math.min(1,ball.z/(ball.r*2.7));
+  ball.scale=1-.38*t;
+  ball.alpha=1-.72*t;
+  if(t>=1){sink();return true}
   return false;
 }
-
 function cupPhysics(){
   if(cupMode==='drop')return dropPhysics();
-  const rx=ball.x-hole.x, ry=ball.y-hole.y;
+
+  const rx=ball.x-hole.x,ry=ball.y-hole.y;
   const d=Math.hypot(rx,ry)||.0001;
   const s=speed();
   const contact=hole.r+ball.r;
   const overlap=contact-d;
-
-  if(overlap<=0){
-    if(cupMode!=='free'){
-      cupMode='free';cupCommitted=false;cupArc=0;
-    }
-    return false;
-  }
+  if(overlap<=0){cupMode='free';return false}
   if(s<.001)return false;
 
   const entry=Math.max(0,Math.min(1,overlap/(2*ball.r)));
-  const ux=rx/d, uy=ry/d;
+  const ux=rx/d,uy=ry/d;
   const radial=ball.vx*ux+ball.vy*uy;
-  const tx=-uy, ty=ux;
-  const tangential=ball.vx*tx+ball.vy*ty;
+  const tangential=-ball.vx*uy+ball.vy*ux;
   const lineOffset=Math.abs(rx*ball.vy-ry*ball.vx)/Math.max(s,.001);
   const central=lineOffset<ball.r*.27;
 
-  // Keep V17's accepted high-speed behavior unchanged.
+  // Keep the deliberately protected first-hole full-power straight shot.
   if(fullStraightShot && central && s>5.4 && !topWallAfterFast){
     crossedCupFast=true;
-    const loss=.992-.022*entry;
+    const loss=.987-.026*entry;
     ball.vx*=loss;ball.vy*=loss;
     return false;
   }
   if(central && s>8.0){
-    const loss=.994-.016*entry;
+    const loss=.991-.020*entry;
     ball.vx*=loss;ball.vy*=loss;
     return false;
   }
 
-  if(cupMode==='free'){
-    cupMode='rim';cupEntrySpeed=s;cupCommitted=false;cupArc=0;
-    cupLastAngle=Math.atan2(ry,rx);
-  }
+  // Continuous lip contact: preserve tangent motion; only the normal component is
+  // progressively constrained as support disappears. No generated circular path.
+  const support=Math.max(0,1-entry);
+  let nr=radial;
+  let nt=tangential;
+  if(nr>0) nr*=Math.max(.18,.96-.70*entry); // outward component loses energy on inner lip
+  else nr*=Math.max(.55,.995-.20*entry);    // inward component is not reversed
+  nt*=Math.max(.86,.998-.055*entry);        // tangential motion survives contact
 
-  const a=Math.atan2(ry,rx);
-  let da=a-cupLastAngle;
-  while(da>Math.PI)da-=Math.PI*2;
-  while(da<-Math.PI)da+=Math.PI*2;
-  cupArc+=Math.abs(da);cupLastAngle=a;
+  // A small gravity/support-loss term acts inward only after real overlap.
+  const inward=.010+.075*entry*entry;
+  nr-=inward*(.55+Math.min(1,3/Math.max(s,.2))*.45);
+  ball.vx=nr*ux-nt*uy;
+  ball.vy=nr*uy+nt*ux;
 
-  // V18 low-speed rule: once enough of a very slow ball is unsupported, gravity wins quickly.
-  // Near-center: drop almost straight. Offset: a brief lip deflection toward the cup, then drop.
-  if(s<=2.15 && entry>=.54){
-    const offsetTouch=!central && Math.abs(tangential)<2.0;
-    startFastDrop(offsetTouch);
-    return dropPhysics();
-  }
-  if(central && entry>=.68 && s<=3.0){
-    startFastDrop(false);return dropPhysics();
-  }
+  const v2=speed();
+  const offsetRatio=Math.min(1,lineOffset/(hole.r||1));
 
-  if(entry>=.75 && s<=5.35)cupCommitted=true;
+  // Capture is continuous: deeper support loss permits faster capture; eccentric
+  // entries need to be deeper/slower. This replaces discrete low/mid/high animations.
+  const captureDepth=.60+.18*offsetRatio;
+  const captureSpeed=4.7-2.2*offsetRatio;
+  if(entry>=captureDepth && v2<=captureSpeed){beginDrop();return dropPhysics()}
 
-  const slow=Math.max(0,1-Math.min(s,6)/6);
-  const supportLoss=entry*entry;
-  const drag=1-(.004+.010*supportLoss+.006*slow*supportLoss);
-  ball.vx*=drag;ball.vy*=drag;
+  // Very deep entries cannot remain suspended: gravity wins even with residual tangent speed.
+  if(entry>=.88 && v2<=5.7){beginDrop();return dropPhysics()}
 
-  const inward=.004+.020*supportLoss+.018*slow*supportLoss;
-  ball.vx-=ux*inward;ball.vy-=uy*inward;
-
-  const rimR=hole.r-ball.r;
-  if(entry>=.52 && d>=rimR*.94){
-    const outwardV=ball.vx*ux+ball.vy*uy;
-    if(outwardV>0){
-      const constraint=.88+Math.min(.10,entry*.10);
-      ball.vx-=ux*outwardV*constraint;
-      ball.vy-=uy*outwardV*constraint;
-    }
-    if(d>rimR){
-      const excess=d-rimR;
-      const corr=Math.min(excess,Math.max(.05,excess*.28));
-      ball.x-=ux*corr;ball.y-=uy*corr;
-    }
-    const lipDrag=cupCommitted?.982:.989;
-    ball.vx*=lipDrag;ball.vy*=lipDrag;
-  }
-
-  const s2=speed();
-  const d2=Math.hypot(ball.x-hole.x,ball.y-hole.y);
-  if(cupCommitted){
-    // Medium-speed captured balls still get a visible short rim action, but do not linger.
-    if((d2<=hole.r*.34 && s2<=3.15) || (cupArc>.42 && s2<=2.55)){
-      startFastDrop(false);return dropPhysics();
-    }
-    if(s2<.18 && entry>.55){startFastDrop(false);return dropPhysics();}
-  }
-
-  if(!cupCommitted && cupArc>.65 && entry<.42 && radial>0){
-    cupMode='free';cupArc=0;
-  }
   return false;
 }
 function physics(){
-  if(won)return;
-  if(cupMode==='drop'){dropPhysics();return;}
-  if(speed()>0){
-    ball.x+=ball.vx;ball.y+=ball.vy;
-
-    // Protected full-power rebound stops above the cup before any second cup interaction.
-    if(topWallAfterFast && ball.vy>0){
-      const safeY=hole.y-hole.r-ball.r*2.8;
-      if(ball.y>=safeY){
-        ball.y=safeY;ball.vx=0;ball.vy=0;cupMode='free';cupCommitted=false;
-        fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;return;
-      }
-    }
-
-    if(cupPhysics())return;
-    ball.vx*=FRICTION;ball.vy*=FRICTION;
-    if(Math.abs(ball.vx)<STOP)ball.vx=0;if(Math.abs(ball.vy)<STOP)ball.vy=0;
-  }
-
-  const T=TOP_SAFE,B=H-10;
-  const laneH=B-T;
-  const laneW=Math.min(W*.82,laneH/2.51);
-  const L=(W-laneW)/2,R=(W+laneW)/2;
-  if(ball.x-ball.r<L){ball.x=L+ball.r;ball.vx=Math.abs(ball.vx)*.78}
-  if(ball.x+ball.r>R){ball.x=R-ball.r;ball.vx=-Math.abs(ball.vx)*.78}
-  if(ball.y-ball.r<T){
-    ball.y=T+ball.r;
-    if(fullStraightShot && crossedCupFast){
-      topWallAfterFast=true;
-      ball.vy=Math.abs(ball.vy)*.24;
-      ball.vx*=.35;
-    }else ball.vy=Math.abs(ball.vy)*.78;
-  }
-  if(ball.y+ball.r>B){ball.y=B-ball.r;ball.vy=-Math.abs(ball.vy)*.78}
-
-  // Second guard, before any possible cup check on the following frame.
-  if(topWallAfterFast && ball.vy>0){
-    const safeY=hole.y-hole.r-ball.r*2.8;
-    if(ball.y>=safeY){
-      ball.y=safeY;ball.vx=0;ball.vy=0;cupMode='free';cupCommitted=false;
-      fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;return;
-    }
-  }
+ if(won)return;
+ if(cupMode==='orbit'){
+   if(orbitPhysics())return;
+ }else if(speed()>0){
+   ball.x+=ball.vx;ball.y+=ball.vy;
+   // On the protected full-power rebound, stop above the cup before any cup interaction.
+   if(topWallAfterFast && ball.vy>0){
+     const safeY=hole.y-hole.r-ball.r*2.8;
+     if(ball.y>=safeY){
+       ball.y=safeY;ball.vx=0;ball.vy=0;cupMode='free';
+       fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;
+       return;
+     }
+   }
+   if(cupPhysics())return;
+   ball.vx*=FRICTION;ball.vy*=FRICTION;
+   if(Math.abs(ball.vx)<STOP)ball.vx=0;if(Math.abs(ball.vy)<STOP)ball.vy=0;
+ }
+ const T=TOP_SAFE,B=H-10;
+ const laneH=B-T;
+ const laneW=Math.min(W*.82,laneH/2.51);
+ const L=(W-laneW)/2,R=(W+laneW)/2;
+ if(ball.x-ball.r<L){ball.x=L+ball.r;ball.vx=Math.abs(ball.vx)*.78}
+ if(ball.x+ball.r>R){ball.x=R-ball.r;ball.vx=-Math.abs(ball.vx)*.78}
+ if(ball.y-ball.r<T){
+ ball.y=T+ball.r;
+ if(fullStraightShot && crossedCupFast){
+   topWallAfterFast=true;
+   // First-hole full-power protection: visible rebound, with heavy energy loss.
+   ball.vy=Math.abs(ball.vy)*.24;
+   ball.vx*=.35;
+ }else{
+   ball.vy=Math.abs(ball.vy)*.78;
+ }
+}
+ if(ball.y+ball.r>B){ball.y=B-ball.r;ball.vy=-Math.abs(ball.vy)*.78}
+ // IMPORTANT: this check happens BEFORE cupPhysics.
+ // A maximum-power straight shot must never be captured on the rebound.
+ if(topWallAfterFast && ball.vy>0){
+   const safeY=hole.y-hole.r-ball.r*2.8;
+   if(ball.y>=safeY){
+     ball.y=safeY;
+     ball.vx=0;ball.vy=0;
+     cupMode='free';
+     fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;
+     return;
+   }
+ }
+ if(cupMode!=='drop')cupPhysics();
 }
 function draw(){
  g.clearRect(0,0,W,H);g.fillStyle='#078d43';g.fillRect(0,0,W,H);
@@ -295,8 +244,7 @@ function draw(){
    g.setLineDash([7,8]);g.strokeStyle='#fff9';g.lineWidth=2;g.beginPath();g.moveTo(ball.x,ball.y);g.lineTo(ball.x+dx*1.5,ball.y+dy*1.5);g.stroke();g.setLineDash([]);
    g.strokeStyle='#fff5';g.beginPath();g.moveTo(ball.x,ball.y);g.lineTo(px,py);g.stroke();
  }
- const drawR=cupMode==='drop'?ball.r*(1-.72*Math.min(1,dropFrames/12)):ball.r;
- g.fillStyle='#fff';g.beginPath();g.arc(ball.x,ball.y,drawR,0,Math.PI*2);g.fill();g.strokeStyle='#bbb';g.stroke();
+ g.save();g.globalAlpha=ball.alpha;g.fillStyle='#fff';g.beginPath();g.arc(ball.x,ball.y,ball.r*ball.scale,0,Math.PI*2);g.fill();g.strokeStyle='#bbb';g.stroke();g.restore();
 }
 c.addEventListener('touchstart',down,{passive:false});c.addEventListener('touchmove',move,{passive:false});c.addEventListener('touchend',up,{passive:false});
 c.addEventListener('mousedown',down);addEventListener('mousemove',move);addEventListener('mouseup',up);
