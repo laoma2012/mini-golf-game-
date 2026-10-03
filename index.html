@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第一关 v6</title>
+<title>迷你高尔夫 第一关 v7</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#102818;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;touch-action:none}
 #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
@@ -75,16 +75,34 @@ function cupPhysics(){
  ball.y=hole.y+Math.sin(cup.angle)*cup.radius;
  if(cup.radius<=ball.r*.14 || cup.turn>=cup.maxTurn) finish();
 }
+
+function circleOverlapFraction(d,R,r){
+  // Fraction of the BALL circle area that lies inside the HOLE circle.
+  if(d>=R+r)return 0;
+  if(d<=Math.abs(R-r)){
+    if(R>=r)return 1;
+    return (R*R)/(r*r);
+  }
+  const a1=Math.acos(Math.max(-1,Math.min(1,(d*d+r*r-R*R)/(2*d*r))));
+  const a2=Math.acos(Math.max(-1,Math.min(1,(d*d+R*R-r*r)/(2*d*R))));
+  const term=Math.max(0,(-d+r+R)*(d+r-R)*(d-r+R)*(d+r+R));
+  const area=r*r*a1+R*R*a2-.5*Math.sqrt(term);
+  return area/(Math.PI*r*r);
+}
+
 function physics(){
  if(won)return;
  if(cup.active){cupPhysics();return}
+
  let s=speed();
  if(s<=0){
-   let ds=Math.hypot(ball.x-hole.x,ball.y-hole.y);
-   if(!passThrough && ds<=hole.r-ball.r*.10) enterCup(ds,0);
+   const ds=Math.hypot(ball.x-hole.x,ball.y-hole.y);
+   const overlap=circleOverlapFraction(ds,hole.r,ball.r);
+   if(!passThrough && overlap>=.75) enterCup(ds,0);
    return;
  }
 
+ const prevX=ball.x, prevY=ball.y;
  ball.x+=ball.vx; ball.y+=ball.vy;
  ball.vx*=friction; ball.vy*=friction;
  if(Math.abs(ball.vx)<stop)ball.vx=0;
@@ -104,33 +122,53 @@ function physics(){
    ball.y=course.bottom-ball.r; ball.vy=-Math.abs(ball.vy)*.72;
  }
 
- let d=Math.hypot(ball.x-hole.x,ball.y-hole.y), now=speed();
- const effectiveR=hole.r-ball.r*.10;
- const contactR=hole.r+ball.r*.75;
+ const d=Math.hypot(ball.x-hole.x,ball.y-hole.y);
+ const now=speed();
+ const overlap=circleOverlapFraction(d,hole.r,ball.r);
+ const contactR=hole.r+ball.r;
 
- // Once a shot has crossed the cup too fast, it cannot be re-captured
- // after the top-wall rebound during the same stroke.
- if(!passThrough && d<=effectiveR && now<=captureSpeed){
-   if(d<=ball.r*.22 && now<1.45) finish();
+ // Rule 1: low speed + at least 75% of ball area inside cup = guaranteed capture.
+ // Eccentricity changes only the animation, not the result.
+ if(!passThrough && now<=captureSpeed && overlap>=.75){
+   if(overlap>=.96 && now<1.35) finish();
    else enterCup(d,now);
    inHoleZone=true;
    return;
  }
 
- if(d<contactR && !inHoleZone){
-   if(now>captureSpeed){
-     // High-speed cup crossing: strong energy loss, direction never reverses here.
-     const depth=Math.max(0,Math.min(1,(contactR-d)/contactR));
-     const factor=.50-depth*.12;
-     ball.vx*=factor; ball.vy*=factor;
+ // Swept segment test so a fast frame cannot skip the cup interaction.
+ const sx=ball.x-prevX, sy=ball.y-prevY;
+ const seg2=sx*sx+sy*sy;
+ let t=0;
+ if(seg2>0){
+   t=((hole.x-prevX)*sx+(hole.y-prevY)*sy)/seg2;
+   t=Math.max(0,Math.min(1,t));
+ }
+ const cx=prevX+sx*t, cy=prevY+sy*t;
+ const sweptD=Math.hypot(cx-hole.x,cy-hole.y);
+ const touching = d<contactR || sweptD<contactR;
+
+ // Rule 2: fast cup interaction = obvious energy loss, never reverse here.
+ if(touching && !inHoleZone){
+   if(now>captureSpeed || overlap<.75){
+     const minD=Math.min(d,sweptD);
+     const depth=Math.max(0,Math.min(1,(contactR-minD)/contactR));
+     // Retain only ~30–48% of speed; deeper entry loses more.
+     const factor=.48-depth*.18;
+     ball.vx*=factor;
+     ball.vy*=factor;
      passThrough=true;
    }
    inHoleZone=true;
- } else if(d>=contactR){
+ } else if(d>=contactR && sweptD>=contactR){
    inHoleZone=false;
  }
 
- if(!passThrough && speed()<=stop && d<=effectiveR) enterCup(d,0);
+ // Rule 3: if it becomes very slow while 75% inside, capture unless this stroke
+ // has already been classified as a high-speed pass-through.
+ if(!passThrough && speed()<=captureSpeed && overlap>=.75){
+   enterCup(d,speed());
+ }
 }
 function draw(){
  ctx.clearRect(0,0,W,H);
