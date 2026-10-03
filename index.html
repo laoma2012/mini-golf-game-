@@ -21,6 +21,8 @@ canvas{display:block;width:100vw;height:100dvh;touch-action:none}
 (()=>{
 const c=document.getElementById('c'),g=c.getContext('2d'),N=document.getElementById('n'),M=document.getElementById('msg');
 let W,H,D=1,strokes=0,won=false,drag=false,px=0,py=0;
+let showFlag=true,fullStraightShot=false,crossedCupFast=false,topWallAfterFast=false;
+let cupMode='free', cupTurn=1, cupEntrySpeed=0;
 let ball={x:0,y:0,r:10,vx:0,vy:0},hole={x:0,y:0,r:25.3};
 const MAX_PULL=175, POWER=.092, FRICTION=.987, STOP=.025;
 const CUP_ENTRY_DRAG=.982;            // shallow contact: modest loss
@@ -46,7 +48,9 @@ function reset(full=true){
  // ball is deliberately lifted above Safari toolbar / gesture zone
  ball.x=W/2;
  ball.y=H-BOTTOM_SAFE-1.5*ball.r;
- ball.vx=ball.vy=0;drag=false;won=false;M.textContent='';
+ ball.vx=ball.vy=0;drag=false;won=false;
+ showFlag=true;fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;cupMode='free';cupEntrySpeed=0;
+ M.textContent='';
  if(full){strokes=0;N.textContent='0'}
 }
 function resize(){
@@ -54,7 +58,7 @@ function resize(){
  c.width=W*D;c.height=H*D;g.setTransform(D,0,0,D,0,0);reset(false)
 }
 function pos(e){let t=e.touches?e.touches[0]:e;return{x:t.clientX,y:t.clientY}}
-function down(e){if(won||speed()>.08)return;let q=pos(e);if(Math.hypot(q.x-ball.x,q.y-ball.y)<ball.r*3.0){drag=true;px=q.x;py=q.y;e.preventDefault()}}
+function down(e){if(won||speed()>.08)return;let q=pos(e);if(Math.hypot(q.x-ball.x,q.y-ball.y)<ball.r*3.0){drag=true;showFlag=false;px=q.x;py=q.y;e.preventDefault()}}
 function move(e){if(!drag)return;let q=pos(e);px=q.x;py=q.y;e.preventDefault()}
 function up(e){
  if(!drag)return;drag=false;
@@ -91,68 +95,94 @@ function sink(){
 function cupPhysics(){
  const rx=ball.x-hole.x, ry=ball.y-hole.y;
  const d=Math.hypot(rx,ry);
- const reach=hole.r+ball.r;
- const depth=reach-d;
- if(depth<=0)return false;
+ const s=speed();
+ const opening=hole.r;
 
- const s0=speed();
- if(s0<.001)return false;
- const pen=Math.max(0,Math.min(1,depth/(2*ball.r)));
+ // Outside the actual opening: the cup exerts no force at all.
+ // This deliberately removes the old "solid center / invisible bumper" feeling.
+ if(d>=opening){
+   if(cupMode==='rim' && d>opening+ball.r*.45) cupMode='free';
+   return false;
+ }
+ if(s<.001)return false;
 
- // No force before overlap. Once overlapping, preserve momentum and continuously bend it.
- const inwardX=d>1e-6?-rx/d:0, inwardY=d>1e-6?-ry/d:0;
+ // Maximum-power straight shot remains an overspeed through-putt.
  const cross=rx*ball.vy-ry*ball.vx;
- let sign=Math.sign(cross);
- if(sign===0) sign=(ball.vx>=0?1:-1);
-
- // Impact parameter: distance from cup center to the incoming velocity line.
- const lineOffset=Math.abs(cross)/s0;
+ const lineOffset=Math.abs(cross)/Math.max(s,.001);
  const central=lineOffset<ball.r*.34;
-
- // Maximum-power, almost perfectly straight shot: guaranteed first-pass overspeed.
- // It crosses the opening and loses substantial energy, but cannot be captured.
- if(fullStraightShot && central && s0>5.6 && !topWallAfterFast){
+ if(fullStraightShot && central && s>5.6 && !topWallAfterFast){
    crossedCupFast=true;
-   const loss=0.935-0.055*pen;
-   ball.vx*=loss; ball.vy*=loss;
+   // Smooth loss across the OPEN cup, never a bounce.
+   ball.vx*=.986; ball.vy*=.986;
+   return false;
+ }
+ if(central && s>8.0){
+   ball.vx*=.989; ball.vy*=.989;
    return false;
  }
 
- // Other genuinely fast central entries may also shoot through.
- if(central && s0>8.0){
-   const loss=0.95-0.045*pen;
-   ball.vx*=loss; ball.vy*=loss;
+ // Enter rim state once the ball center has genuinely crossed the cup edge.
+ if(cupMode!=='rim'){
+   cupMode='rim';
+   cupEntrySpeed=s;
+   cupTurn=Math.sign(cross);
+   if(cupTurn===0){
+     // Perfectly central moderate/slow entry has no artificial sideways kick.
+     cupTurn=0;
+   }
+ }
+
+ const depth=Math.max(0,Math.min(1,(opening-d)/opening));
+
+ // Perfectly central slow/moderate ball: continue straight into the empty opening.
+ // Gravity/energy loss makes it drop only after it is well inside.
+ if(cupTurn===0){
+   const smooth=.992-.018*depth;
+   ball.vx*=smooth; ball.vy*=smooth;
+   if(depth>.52 && speed()<5.15){sink();return true}
    return false;
  }
 
- // Tangent to the circular cup at the ball's current location.
- // Direction is selected from angular momentum, so there is NO radial "bounce outward".
- const tx=sign*(-ry/(d||1)), ty=sign*(rx/(d||1));
- let ux=ball.vx/s0, uy=ball.vy/s0;
+ // Off-center entry: preserve angular momentum and bend along the INNER RIM.
+ // Tangent direction follows the incoming angular momentum. There is NO outward normal impulse.
+ const ux=rx/(d||1), uy=ry/(d||1);          // center -> ball
+ const tx=cupTurn*(-uy), ty=cupTurn*ux;     // rim tangent
+ const inwardX=-ux, inwardY=-uy;            // only inward, never outward
 
- // Bend progressively: shallow overlap = gentle curve, deep overlap = strong rim ride.
- const bend=Math.min(.42,.055+.30*pen);
- ux=ux*(1-bend)+tx*bend;
- uy=uy*(1-bend)+ty*bend;
+ const v=speed();
+ let vx=ball.vx, vy=ball.vy;
 
- // Equivalent gravity: weak inward component, increasing with unsupported depth.
- // Kept deliberately small so the ball spirals rather than snaps to center.
- const gravity=.006+.030*pen*pen;
- ux+=inwardX*gravity; uy+=inwardY*gravity;
- const n=Math.hypot(ux,uy)||1; ux/=n;uy/=n;
+ // Continuous curvature, not a sudden redirection.
+ // The deeper the unsupported ball is, the more its path follows the rim.
+ const tangentBlend=.018+.055*depth;
+ vx=vx*(1-tangentBlend)+(tx*v)*tangentBlend;
+ vy=vy*(1-tangentBlend)+(ty*v)*tangentBlend;
 
- // Cup contact dissipates energy continuously and visibly.
- const damp=.986-.050*pen;
- ball.vx=ux*s0*damp;
- ball.vy=uy*s0*damp;
+ // Small inward "fall" makes the orbit radius contract gradually.
+ const fall=.010+.020*depth;
+ vx+=inwardX*fall;
+ vy+=inwardY*fall;
 
- const s1=speed();
- const angular=Math.abs(rx*ball.vy-ry*ball.vx)/(d||1);
+ // Energy loss is gradual per frame, avoiding the visible sudden brake at first contact.
+ const drag=.996-.010*depth;
+ ball.vx=vx*drag;
+ ball.vy=vy*drag;
 
- // Slow/deep ball: sink only after it has lost enough tangential energy.
- if(pen>.76 && s1<4.55 && angular<1.55){sink();return true}
- if(central && pen>.64 && s1<3.85){sink();return true}
- if(s1<.16 && pen>.48){sink();return true}
+ const v2=speed();
+ const radialIn=ball.vx*inwardX+ball.vy*inwardY;
+ const tang=Math.abs(ball.vx*tx+ball.vy*ty);
+
+ // Sink only when the ball has travelled well inside and lost enough energy.
+ // No center point collision exists anywhere in this model.
+ if(depth>.62 && v2<4.15 && tang<2.65 && radialIn>=-.4){
+   sink();return true;
+ }
+ if(depth>.78 && v2<4.8){
+   sink();return true;
+ }
+ if(v2<.14 && depth>.42){
+   sink();return true;
+ }
  return false;
 }
 function physics(){
