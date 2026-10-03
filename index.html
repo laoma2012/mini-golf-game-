@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第一关 v6</title>
+<title>迷你高尔夫 第一关 v7</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#123b22;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;touch-action:none}
 canvas{display:block;width:100vw;height:100dvh;touch-action:none}
@@ -22,15 +22,17 @@ canvas{display:block;width:100vw;height:100dvh;touch-action:none}
 const c=document.getElementById('c'),g=c.getContext('2d'),N=document.getElementById('n'),M=document.getElementById('msg');
 let W,H,D=1,strokes=0,won=false,drag=false,px=0,py=0;
 let ball={x:0,y:0,r:10,vx:0,vy:0},hole={x:0,y:0,r:25.3};
-const MAX_PULL=150, POWER=.076, FRICTION=.985, STOP=.025;
-const CUP_DRAG=.955;                 // stronger speed loss while interacting with cup
-const CUP_DEEP_DRAG=.925;            // deeper overlap loses still more energy
-const CUP_CURVE=.012;                // weaker direct pull; avoids snap-to-center
-const CUP_SWIRL=.030;                // converts inward motion into tangential rim motion
-const DIRECT_CAPTURE_SPEED=4.8;      // low/moderate speed deep entry
-const HARD_CAPTURE_SPEED=6.2;        // 75% entry safety
-const RIM_BOUNCE=.88;                // preserve energy for lip-outs
-const BOTTOM_SAFE=112;               // Safari clearance, but preserve a longer lane
+const MAX_PULL=175, POWER=.092, FRICTION=.987, STOP=.025;
+const CUP_ENTRY_DRAG=.982;            // shallow contact: modest loss
+const CUP_ORBIT_DRAG=.955;            // while riding the lip: strong loss
+const CUP_PULL=.010;                  // only weak inward gravity, never snap-to-center
+const CUP_TURN=.105;                  // bends velocity along the circular rim
+const FAST_THROUGH=8.7;               // central high-speed shot must pass through
+const FAST_LIP=6.4;                   // off-center high-speed shots can lip around and escape
+const DROP_SPEED=4.65;                // normal low-speed capture
+const DEEP_DROP_SPEED=6.0;            // deep slow/moderate capture
+const ENTRY_DEPTH_RATIO=.78;
+const BOTTOM_SAFE=88;               // Safari clearance, but preserve a longer lane
 const TOP_SAFE=72;
 
 function rr(x,y,w,h,r){g.beginPath();g.moveTo(x+r,y);g.lineTo(x+w-r,y);g.quadraticCurveTo(x+w,y,x+w,y+r);g.lineTo(x+w,y+h-r);g.quadraticCurveTo(x+w,y+h,x+w-r,y+h);g.lineTo(x+r,y+h);g.quadraticCurveTo(x,y+h,x,y+h-r);g.lineTo(x,y+r);g.quadraticCurveTo(x,y,x+r,y);g.closePath()}
@@ -40,10 +42,10 @@ function reset(full=true){
  hole.x=W/2;
  // fixed design rule: cup center about 3 cup diameters below playable top edge
  const playableTop=TOP_SAFE;
- hole.y=playableTop + 6*hole.r;
+ hole.y=playableTop + 7*hole.r;
  // ball is deliberately lifted above Safari toolbar / gesture zone
  ball.x=W/2;
- ball.y=H-BOTTOM_SAFE-1.8*ball.r;
+ ball.y=H-BOTTOM_SAFE-1.5*ball.r;
  ball.vx=ball.vy=0;drag=false;won=false;M.textContent='';
  if(full){strokes=0;N.textContent='0'}
 }
@@ -74,59 +76,79 @@ V5 cup model:
 - If centrifugal/tangential motion wins, ball can lip out.
 */
 function cupPhysics(){
- const dx=hole.x-ball.x,dy=hole.y-ball.y,d=Math.hypot(dx,dy),s=speed();
+ const dx=hole.x-ball.x, dy=hole.y-ball.y, d=Math.hypot(dx,dy);
  const reach=hole.r+ball.r, depth=reach-d;
  if(depth<=0)return false;
 
  const penetration=Math.max(0,Math.min(1,depth/(2*ball.r)));
- const nx=d>0?dx/d:0, ny=d>0?dy/d:0;
+ const nx=d>1e-5?dx/d:0, ny=d>1e-5?dy/d:0;       // toward cup center
+ const tx=-ny, ty=nx;                              // tangent
+ const s0=speed();
  const radial=ball.vx*nx+ball.vy*ny;
- const tx=-ny, ty=nx;
  const tangential=ball.vx*tx+ball.vy*ty;
 
- // Cup interaction: gravity bends the path inward, but preserves/creates tangential motion.
- // This produces a visible spiral/rim path instead of snapping the ball to the center.
- const pull=CUP_CURVE*(0.10+0.90*penetration);
- ball.vx += nx*pull;
- ball.vy += ny*pull;
+ // How central is the trajectory? 1 = almost through center; 0 = grazing/lip shot.
+ const cross=Math.abs((ball.x-hole.x)*ball.vy-(ball.y-hole.y)*ball.vx);
+ const lineOffset=s0>0.001?cross/s0:999;
+ const central=lineOffset < ball.r*.38;
 
- // If entry is off-center, redirect a small part of inward velocity along the rim.
- // Sign follows the existing tangential direction; if almost zero, use cross-product side.
- let swirlSign=Math.sign(tangential);
- if(swirlSign===0) swirlSign=Math.sign(dx*ball.vy-dy*ball.vx)||1;
- const inward=Math.max(0,radial);
- const swirl=inward*CUP_SWIRL*(0.35+0.65*penetration);
- ball.vx += tx*swirl*swirlSign;
- ball.vy += ty*swirl*swirlSign;
-
- // Stronger, depth-dependent energy loss when the ball passes across the cup.
- const cupDamp=CUP_DRAG-(CUP_DRAG-CUP_DEEP_DRAG)*penetration;
- ball.vx *= cupDamp;
- ball.vy *= cupDamp;
-
- const s2=speed();
-
- // Deep slow entry: must fall.
- if(penetration>=.82 && s2<=HARD_CAPTURE_SPEED && Math.abs(tangential)<2.1){sink();return true}
- // Central slow entry drops normally. Off-center shots keep tangential velocity and visibly spiral first.
- if(d <= hole.r-ball.r*.18 && penetration>=.62 && s2<=DIRECT_CAPTURE_SPEED &&
-    Math.abs(tangential) < 1.25){sink();return true}
- // Nearly stopped ball substantially inside cannot hang on the lip.
- if(s2<=.20 && penetration>=.50){sink();return true}
-
- // Rim / lip interaction: when offset and tangential motion is significant,
- // preserve sideways motion and allow a "toilet-bowl" arc or lip-out.
- if(penetration>.22 && penetration<.72 && Math.abs(tangential)>.55){
-   const outwardX=-nx, outwardY=-ny;
-   // only resist excessive inward plunge; don't snap to center
-   if(radial>1.4){
-      ball.vx -= nx*radial*(1-RIM_BOUNCE);
-      ball.vy -= ny*radial*(1-RIM_BOUNCE);
-   }
-   // tiny tangential preservation creates visible rim travel
-   ball.vx += tx*tangential*.003;
-   ball.vy += ty*tangential*.003;
+ // Rule 1: a genuinely fast, central shot is NEVER captured on first pass.
+ // It loses speed crossing the cup but continues through to the back wall.
+ if(central && s0>=FAST_THROUGH){
+   const loss=0.965-0.035*penetration;
+   ball.vx*=loss; ball.vy*=loss;
+   return false;
  }
+
+ // Determine orbit direction from angular momentum.
+ let orbitSign=Math.sign((ball.x-hole.x)*ball.vy-(ball.y-hole.y)*ball.vx);
+ if(orbitSign===0) orbitSign=Math.sign(tangential)||1;
+
+ // Rule 2: once an off-center ball overlaps the cup, curve its velocity ALONG the rim,
+ // not radially outward. This is the toilet-bowl / lip-out mechanism.
+ const tangentX = orbitSign * (-ny);
+ const tangentY = orbitSign * nx;
+
+ // Blend current direction toward rim tangent. Faster/deeper shots turn more visibly.
+ const turn=Math.min(.34, CUP_TURN*(.35+1.35*penetration)*(1+Math.min(s0,10)/10));
+ const curS=Math.max(.001,s0);
+ let ux=ball.vx/curS, uy=ball.vy/curS;
+ ux=(1-turn)*ux+turn*tangentX;
+ uy=(1-turn)*uy+turn*tangentY;
+ const un=Math.hypot(ux,uy)||1; ux/=un; uy/=un;
+
+ // Weak inward gravity only; enough for spiral convergence at low speed.
+ const pull=CUP_PULL*(.15+.85*penetration);
+ let vx=ux*curS + nx*pull;
+ let vy=uy*curS + ny*pull;
+
+ // Significant energy loss while riding/crossing the cup.
+ // Deeper contact and longer rim travel reduce speed more strongly.
+ const damp=CUP_ENTRY_DRAG-(CUP_ENTRY_DRAG-CUP_ORBIT_DRAG)*penetration;
+ vx*=damp; vy*=damp;
+ ball.vx=vx; ball.vy=vy;
+
+ const s1=speed();
+ const radialAfter=ball.vx*nx+ball.vy*ny;
+ const tangAfter=ball.vx*tangentX+ball.vy*tangentY;
+
+ // Rule 3: low-speed central/deep balls fall.
+ // Off-center balls are deliberately allowed to orbit before capture.
+ if(penetration>=.78 && s1<=DEEP_DROP_SPEED && Math.abs(tangAfter)<2.0){
+   sink(); return true;
+ }
+ if(central && penetration>=.58 && s1<=DROP_SPEED){
+   sink(); return true;
+ }
+
+ // Very slow ball substantially over the opening cannot remain suspended.
+ if(s1<=.16 && penetration>=.48){
+   sink(); return true;
+ }
+
+ // No outward rim bounce is applied here. A fast offset shot keeps travelling
+ // tangentially around the inside edge; after losing energy it either spirals in
+ // or exits naturally, potentially after ~90–180 degrees of rim travel.
  return false;
 }
 function physics(){
@@ -137,7 +159,7 @@ function physics(){
    ball.vx*=FRICTION;ball.vy*=FRICTION;
    if(Math.abs(ball.vx)<STOP)ball.vx=0;if(Math.abs(ball.vy)<STOP)ball.vy=0;
  }
- const L=Math.max(18,W*.07),R=W-L,T=TOP_SAFE,B=H-22;
+ const L=Math.max(28,W*.14),R=W-L,T=TOP_SAFE,B=H-10;
  if(ball.x-ball.r<L){ball.x=L+ball.r;ball.vx=Math.abs(ball.vx)*.78}
  if(ball.x+ball.r>R){ball.x=R-ball.r;ball.vx=-Math.abs(ball.vx)*.78}
  if(ball.y-ball.r<T){ball.y=T+ball.r;ball.vy=Math.abs(ball.vy)*.78}
@@ -146,7 +168,7 @@ function physics(){
 }
 function draw(){
  g.clearRect(0,0,W,H);g.fillStyle='#078d43';g.fillRect(0,0,W,H);
- const L=Math.max(18,W*.07),B=H-22;
+ const L=Math.max(28,W*.14),B=H-10;
  g.fillStyle='#42ae61';rr(L,TOP_SAFE,W-2*L,B-TOP_SAFE,18);g.fill();
  g.fillStyle='rgba(255,255,255,.025)';g.fillRect(W*.37,TOP_SAFE,W*.26,B-TOP_SAFE);
  // cup
