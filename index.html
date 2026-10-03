@@ -59,7 +59,11 @@ function move(e){if(!drag)return;let q=pos(e);px=q.x;py=q.y;e.preventDefault()}
 function up(e){
  if(!drag)return;drag=false;
  let dx=ball.x-px,dy=ball.y-py,d=Math.hypot(dx,dy);if(d<5)return;
- if(d>MAX_PULL){dx*=MAX_PULL/d;dy*=MAX_PULL/d}
+ const rawD=d;
+ if(d>MAX_PULL){dx*=MAX_PULL/d;dy*=MAX_PULL/d;d=MAX_PULL}
+ const aimX=dx/(Math.hypot(dx,dy)||1);
+ fullStraightShot=(rawD>=MAX_PULL*.94 && Math.abs(aimX)<.055);
+ crossedCupFast=false;topWallAfterFast=false;
  ball.vx=dx*POWER;ball.vy=dy*POWER;strokes++;N.textContent=strokes;e.preventDefault()
 }
 function sink(){
@@ -85,79 +89,70 @@ function sink(){
  M.innerHTML=result;
 }
 function cupPhysics(){
- const dx=hole.x-ball.x, dy=hole.y-ball.y, d=Math.hypot(dx,dy);
- const reach=hole.r+ball.r, depth=reach-d;
+ const rx=ball.x-hole.x, ry=ball.y-hole.y;
+ const d=Math.hypot(rx,ry);
+ const reach=hole.r+ball.r;
+ const depth=reach-d;
  if(depth<=0)return false;
 
- const penetration=Math.max(0,Math.min(1,depth/(2*ball.r)));
- const nx=d>1e-5?dx/d:0, ny=d>1e-5?dy/d:0;       // toward cup center
- const tx=-ny, ty=nx;                              // tangent
  const s0=speed();
- const radial=ball.vx*nx+ball.vy*ny;
- const tangential=ball.vx*tx+ball.vy*ty;
+ if(s0<.001)return false;
+ const pen=Math.max(0,Math.min(1,depth/(2*ball.r)));
 
- // How central is the trajectory? 1 = almost through center; 0 = grazing/lip shot.
- const cross=Math.abs((ball.x-hole.x)*ball.vy-(ball.y-hole.y)*ball.vx);
- const lineOffset=s0>0.001?cross/s0:999;
- const central=lineOffset < ball.r*.38;
+ // No force before overlap. Once overlapping, preserve momentum and continuously bend it.
+ const inwardX=d>1e-6?-rx/d:0, inwardY=d>1e-6?-ry/d:0;
+ const cross=rx*ball.vy-ry*ball.vx;
+ let sign=Math.sign(cross);
+ if(sign===0) sign=(ball.vx>=0?1:-1);
 
- // Rule 1: a genuinely fast, central shot is NEVER captured on first pass.
- // It loses speed crossing the cup but continues through to the back wall.
- if(central && s0>=FAST_THROUGH){
-   const loss=0.965-0.035*penetration;
+ // Impact parameter: distance from cup center to the incoming velocity line.
+ const lineOffset=Math.abs(cross)/s0;
+ const central=lineOffset<ball.r*.34;
+
+ // Maximum-power, almost perfectly straight shot: guaranteed first-pass overspeed.
+ // It crosses the opening and loses substantial energy, but cannot be captured.
+ if(fullStraightShot && central && s0>5.6 && !topWallAfterFast){
+   crossedCupFast=true;
+   const loss=0.935-0.055*pen;
    ball.vx*=loss; ball.vy*=loss;
    return false;
  }
 
- // Determine orbit direction from angular momentum.
- let orbitSign=Math.sign((ball.x-hole.x)*ball.vy-(ball.y-hole.y)*ball.vx);
- if(orbitSign===0) orbitSign=Math.sign(tangential)||1;
+ // Other genuinely fast central entries may also shoot through.
+ if(central && s0>8.0){
+   const loss=0.95-0.045*pen;
+   ball.vx*=loss; ball.vy*=loss;
+   return false;
+ }
 
- // Rule 2: once an off-center ball overlaps the cup, curve its velocity ALONG the rim,
- // not radially outward. This is the toilet-bowl / lip-out mechanism.
- const tangentX = orbitSign * (-ny);
- const tangentY = orbitSign * nx;
+ // Tangent to the circular cup at the ball's current location.
+ // Direction is selected from angular momentum, so there is NO radial "bounce outward".
+ const tx=sign*(-ry/(d||1)), ty=sign*(rx/(d||1));
+ let ux=ball.vx/s0, uy=ball.vy/s0;
 
- // Blend current direction toward rim tangent. Faster/deeper shots turn more visibly.
- const turn=Math.min(.34, CUP_TURN*(.35+1.35*penetration)*(1+Math.min(s0,10)/10));
- const curS=Math.max(.001,s0);
- let ux=ball.vx/curS, uy=ball.vy/curS;
- ux=(1-turn)*ux+turn*tangentX;
- uy=(1-turn)*uy+turn*tangentY;
- const un=Math.hypot(ux,uy)||1; ux/=un; uy/=un;
+ // Bend progressively: shallow overlap = gentle curve, deep overlap = strong rim ride.
+ const bend=Math.min(.42,.055+.30*pen);
+ ux=ux*(1-bend)+tx*bend;
+ uy=uy*(1-bend)+ty*bend;
 
- // Weak inward gravity only; enough for spiral convergence at low speed.
- const pull=CUP_PULL*(.15+.85*penetration);
- let vx=ux*curS + nx*pull;
- let vy=uy*curS + ny*pull;
+ // Equivalent gravity: weak inward component, increasing with unsupported depth.
+ // Kept deliberately small so the ball spirals rather than snaps to center.
+ const gravity=.006+.030*pen*pen;
+ ux+=inwardX*gravity; uy+=inwardY*gravity;
+ const n=Math.hypot(ux,uy)||1; ux/=n;uy/=n;
 
- // Significant energy loss while riding/crossing the cup.
- // Deeper contact and longer rim travel reduce speed more strongly.
- const damp=CUP_ENTRY_DRAG-(CUP_ENTRY_DRAG-CUP_ORBIT_DRAG)*penetration;
- vx*=damp; vy*=damp;
- ball.vx=vx; ball.vy=vy;
+ // Cup contact dissipates energy continuously and visibly.
+ const damp=.986-.050*pen;
+ ball.vx=ux*s0*damp;
+ ball.vy=uy*s0*damp;
 
  const s1=speed();
- const radialAfter=ball.vx*nx+ball.vy*ny;
- const tangAfter=ball.vx*tangentX+ball.vy*tangentY;
+ const angular=Math.abs(rx*ball.vy-ry*ball.vx)/(d||1);
 
- // Rule 3: low-speed central/deep balls fall.
- // Off-center balls are deliberately allowed to orbit before capture.
- if(penetration>=.78 && s1<=DEEP_DROP_SPEED && Math.abs(tangAfter)<2.0){
-   sink(); return true;
- }
- if(central && penetration>=.58 && s1<=DROP_SPEED){
-   sink(); return true;
- }
-
- // Very slow ball substantially over the opening cannot remain suspended.
- if(s1<=.16 && penetration>=.48){
-   sink(); return true;
- }
-
- // No outward rim bounce is applied here. A fast offset shot keeps travelling
- // tangentially around the inside edge; after losing energy it either spirals in
- // or exits naturally, potentially after ~90–180 degrees of rim travel.
+ // Slow/deep ball: sink only after it has lost enough tangential energy.
+ if(pen>.76 && s1<4.55 && angular<1.55){sink();return true}
+ if(central && pen>.64 && s1<3.85){sink();return true}
+ if(s1<.16 && pen>.48){sink();return true}
  return false;
 }
 function physics(){
@@ -174,8 +169,23 @@ function physics(){
  const L=(W-laneW)/2,R=(W+laneW)/2;
  if(ball.x-ball.r<L){ball.x=L+ball.r;ball.vx=Math.abs(ball.vx)*.78}
  if(ball.x+ball.r>R){ball.x=R-ball.r;ball.vx=-Math.abs(ball.vx)*.78}
- if(ball.y-ball.r<T){ball.y=T+ball.r;ball.vy=Math.abs(ball.vy)*.78}
+ if(ball.y-ball.r<T){
+ ball.y=T+ball.r;
+ if(fullStraightShot && crossedCupFast){
+   topWallAfterFast=true;
+   // Tuned first-hole protection: return stroke dies above the cup.
+   ball.vy=Math.abs(ball.vy)*.31;
+   ball.vx*=.45;
+ }else{
+   ball.vy=Math.abs(ball.vy)*.78;
+ }
+}
  if(ball.y+ball.r>B){ball.y=B-ball.r;ball.vy=-Math.abs(ball.vy)*.78}
+ if(topWallAfterFast && ball.vy>0 && ball.y>=hole.y-hole.r-ball.r*2.2){
+   ball.y=hole.y-hole.r-ball.r*2.2;
+   ball.vx=0;ball.vy=0;
+   fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;
+ }
  cupPhysics();
 }
 function draw(){
@@ -189,9 +199,11 @@ function draw(){
  // cup
  g.fillStyle='#111';g.beginPath();g.arc(hole.x,hole.y,hole.r,0,Math.PI*2);g.fill();
  g.strokeStyle='rgba(255,255,255,.35)';g.lineWidth=1.5;g.stroke();
- // flag
- g.strokeStyle='#eee';g.lineWidth=2;g.beginPath();g.moveTo(hole.x,hole.y);g.lineTo(hole.x,hole.y-62);g.stroke();
- g.fillStyle='#fff';g.beginPath();g.moveTo(hole.x,hole.y-62);g.lineTo(hole.x+34,hole.y-51);g.lineTo(hole.x,hole.y-40);g.closePath();g.fill();
+ // flag is visual only; it disappears as soon as the player first touches the ball.
+ if(showFlag){
+   g.strokeStyle='#eee';g.lineWidth=2;g.beginPath();g.moveTo(hole.x,hole.y);g.lineTo(hole.x,hole.y-62);g.stroke();
+   g.fillStyle='#e32626';g.beginPath();g.moveTo(hole.x,hole.y-62);g.lineTo(hole.x+34,hole.y-51);g.lineTo(hole.x,hole.y-40);g.closePath();g.fill();
+ }
  // aim
  if(drag){
    let dx=ball.x-px,dy=ball.y-py,d=Math.hypot(dx,dy);if(d>MAX_PULL){dx*=MAX_PULL/d;dy*=MAX_PULL/d}
