@@ -4,92 +4,100 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第一关 v3</title>
+<title>迷你高尔夫 第一关 v4 洞杯物理</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#173e25;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;touch-action:none}
 canvas{display:block;width:100vw;height:100vh;touch-action:none}
-#hud{position:fixed;top:max(14px,env(safe-area-inset-top));left:0;right:0;text-align:center;color:#fff;text-shadow:0 2px 4px #0008;pointer-events:none}
+#hud{position:fixed;top:max(13px,env(safe-area-inset-top));left:0;right:0;text-align:center;color:#fff;text-shadow:0 2px 4px #0008;pointer-events:none}
 #hud b{font-size:19px}.sub{font-size:12px;margin-top:4px}
 #msg{position:fixed;left:50%;top:44%;transform:translate(-50%,-50%);text-align:center;color:#fff;font-size:30px;font-weight:800;text-shadow:0 3px 8px #000;pointer-events:none}
 #reset{position:fixed;right:14px;bottom:max(18px,env(safe-area-inset-bottom));padding:9px 14px;border:0;border-radius:18px;background:#fff;color:#173e25;font-weight:700}
-</style>
-</head>
+</style></head>
 <body>
 <canvas id="c"></canvas>
-<div id="hud"><b>第一关 · PAR 2　杆数：<span id="n">0</span></b><div class="sub">按住白球向后拖，松手击球 · 高速会冲洞</div></div>
+<div id="hud"><b>第一关 · PAR 2　杆数：<span id="n">0</span></b><div class="sub">按住白球向后拖，松手击球</div></div>
 <div id="msg"></div><button id="reset">重新开始</button>
 <script>
 (()=>{
 const c=document.getElementById('c'),g=c.getContext('2d'),N=document.getElementById('n'),M=document.getElementById('msg');
 let W,H,D=1,strokes=0,won=false,drag=false,px=0,py=0;
-let ball={x:0,y:0,r:10,vx:0,vy:0}, hole={x:0,y:0,r:25.3};
-const MAX_PULL=155, POWER=.076, FRICTION=.985, STOP=.035;
-const NORMAL_CAPTURE_SPEED=3.45;   // raised substantially from v2
-const STOPPED_CAPTURE_SPEED=.12;
-const ENTRY_DEPTH_RATIO=.75;       // user rule: 75% of ball diameter enters cup
+let ball={x:0,y:0,r:10,vx:0,vy:0},hole={x:0,y:0,r:25.3};
+const MAX_PULL=155,POWER=.076,BASE_FRICTION=.985,STOP=.025;
+const CUP_CAPTURE_SPEED=7.4;       // >2x prior practical threshold
+const HARD_CAPTURE_SPEED=9.0;      // 75%-depth safety capture unless genuinely fast
+const ENTRY_DEPTH_RATIO=.75;
+const CUP_PULL=.115;               // equivalent inward gravity
+const CUP_DAMPING=.935;            // energy loss while partially unsupported
+const CUP_INFLUENCE_PAD=1.15;      // starts when ball body reaches cup area
+
 function rr(x,y,w,h,r){g.beginPath();g.moveTo(x+r,y);g.lineTo(x+w-r,y);g.quadraticCurveTo(x+w,y,x+w,y+r);g.lineTo(x+w,y+h-r);g.quadraticCurveTo(x+w,y+h,x+w-r,y+h);g.lineTo(x+r,y+h);g.quadraticCurveTo(x,y+h,x,y+h-r);g.lineTo(x,y+r);g.quadraticCurveTo(x,y,x+r,y);g.closePath()}
 function reset(full=true){
- ball.r=Math.max(9,Math.min(12,W*.024)); hole.r=ball.r*2.53;
- ball.x=W/2; ball.y=H*.86; ball.vx=ball.vy=0;
- hole.x=W/2; hole.y=H*.135; drag=false;won=false;M.textContent='';
+ ball.r=Math.max(9,Math.min(12,W*.024));hole.r=ball.r*2.53;
+ ball.x=W/2;ball.y=H*.88;ball.vx=ball.vy=0;
+ hole.x=W/2;hole.y=H*.12;drag=false;won=false;M.textContent='';
  if(full){strokes=0;N.textContent='0'}
 }
 function resize(){D=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;c.width=W*D;c.height=H*D;g.setTransform(D,0,0,D,0,0);reset(false)}
-function sp(){return Math.hypot(ball.vx,ball.vy)}
-function p(e){let t=e.touches?e.touches[0]:e;return{x:t.clientX,y:t.clientY}}
-function down(e){if(won||sp()>.08)return;let q=p(e);if(Math.hypot(q.x-ball.x,q.y-ball.y)<ball.r*2.5){drag=true;px=q.x;py=q.y;e.preventDefault()}}
-function move(e){if(!drag)return;let q=p(e);px=q.x;py=q.y;e.preventDefault()}
+function speed(){return Math.hypot(ball.vx,ball.vy)}
+function pos(e){let t=e.touches?e.touches[0]:e;return{x:t.clientX,y:t.clientY}}
+function down(e){if(won||speed()>.08)return;let q=pos(e);if(Math.hypot(q.x-ball.x,q.y-ball.y)<ball.r*2.6){drag=true;px=q.x;py=q.y;e.preventDefault()}}
+function move(e){if(!drag)return;let q=pos(e);px=q.x;py=q.y;e.preventDefault()}
 function up(e){if(!drag)return;drag=false;let dx=ball.x-px,dy=ball.y-py,d=Math.hypot(dx,dy);if(d<5)return;if(d>MAX_PULL){dx*=MAX_PULL/d;dy*=MAX_PULL/d}ball.vx=dx*POWER;ball.vy=dy*POWER;strokes++;N.textContent=strokes;e.preventDefault()}
 function sink(){
- won=true;ball.vx=ball.vy=0;ball.x=hole.x;ball.y=hole.y;
+ if(won)return;won=true;ball.vx=ball.vy=0;ball.x=hole.x;ball.y=hole.y;
  M.innerHTML=strokes===1?'EAGLE!<br><span style="font-size:16px">一杆进洞 · 额外奖励</span>':strokes===2?'PAR':('完成 · '+strokes+' 杆');
 }
-/*
-Geometry:
-Along the line joining cup center to ball center, the amount of ball diameter
-that lies past the near rim of the cup is:
-entryDepth = holeRadius + ballRadius - centerDistance.
-User rule requires >= 75% of ball diameter.
-Therefore d <= holeR + ballR - 0.75*(2*ballR)
-             = holeR - 0.5*ballR.
-This is deliberately based on ball-body penetration, not an arbitrary tiny
-center-capture circle.
-*/
-function captureCheck(){
- const d=Math.hypot(ball.x-hole.x,ball.y-hole.y), s=sp();
- const requiredDepth=ENTRY_DEPTH_RATIO*(2*ball.r);
- const entryDepth=hole.r+ball.r-d;
- const deepEnough=entryDepth>=requiredDepth;
- if(deepEnough && s<=NORMAL_CAPTURE_SPEED){sink();return true}
- // Fail-safe: a virtually stopped ball deeply overlapping the cup can never sit on top of it.
- if(s<=STOPPED_CAPTURE_SPEED && entryDepth>=ball.r){sink();return true}
+function cupPhysics(){
+ const dx=hole.x-ball.x,dy=hole.y-ball.y,d=Math.hypot(dx,dy),s=speed();
+ const bodyReach=hole.r+ball.r;
+ const entryDepth=bodyReach-d; // how far ball body has entered past near rim
+ if(entryDepth<=0)return false;
+
+ const penetration=Math.max(0,Math.min(1,entryDepth/(2*ball.r)));
+ // Equivalent gravity: weak at first contact, strong as more of the ball loses support.
+ if(d>0.001){
+   const pull=CUP_PULL*(0.18+0.82*penetration*penetration);
+   ball.vx+=(dx/d)*pull;
+   ball.vy+=(dy/d)*pull;
+ }
+ // Cup removes kinetic energy; deeper entry means stronger damping.
+ const damp=1-(1-CUP_DAMPING)*(0.25+0.75*penetration);
+ ball.vx*=damp;ball.vy*=damp;
+
+ const s2=speed();
+ // Hard rule requested by user: 75% diameter entered + not genuinely high speed => sink.
+ if(penetration>=ENTRY_DEPTH_RATIO && s2<=HARD_CAPTURE_SPEED){sink();return true}
+ // Normal capture: once center is within cup and speed is moderate, gravity wins.
+ if(d<=hole.r && penetration>=0.50 && s2<=CUP_CAPTURE_SPEED){sink();return true}
+ // Absolute fail-safe: a nearly stopped ball substantially over the cup cannot remain suspended.
+ if(s2<=0.22 && penetration>=0.45){sink();return true}
  return false;
 }
 function physics(){
  if(won)return;
- if(sp()>0){
-  ball.x+=ball.vx;ball.y+=ball.vy;
-  if(captureCheck())return;
-  ball.vx*=FRICTION;ball.vy*=FRICTION;
-  if(Math.abs(ball.vx)<STOP)ball.vx=0;if(Math.abs(ball.vy)<STOP)ball.vy=0;
-  const L=Math.max(18,W*.08),R=W-L,T=62,B=H-18;
-  if(ball.x-ball.r<L){ball.x=L+ball.r;ball.vx=Math.abs(ball.vx)*.76}
-  if(ball.x+ball.r>R){ball.x=R-ball.r;ball.vx=-Math.abs(ball.vx)*.76}
-  if(ball.y-ball.r<T){ball.y=T+ball.r;ball.vy=Math.abs(ball.vy)*.76}
-  if(ball.y+ball.r>B){ball.y=B-ball.r;ball.vy=-Math.abs(ball.vy)*.76}
-  captureCheck();
- } else {
-  captureCheck(); // critical: also evaluate a ball that has already stopped
+ if(speed()>0){
+   ball.x+=ball.vx;ball.y+=ball.vy;
+   if(cupPhysics())return;
+   ball.vx*=BASE_FRICTION;ball.vy*=BASE_FRICTION;
+   if(Math.abs(ball.vx)<STOP)ball.vx=0;if(Math.abs(ball.vy)<STOP)ball.vy=0;
+   const L=Math.max(18,W*.08),R=W-L,T=58,B=H-14;
+   if(ball.x-ball.r<L){ball.x=L+ball.r;ball.vx=Math.abs(ball.vx)*.76}
+   if(ball.x+ball.r>R){ball.x=R-ball.r;ball.vx=-Math.abs(ball.vx)*.76}
+   if(ball.y-ball.r<T){ball.y=T+ball.r;ball.vy=Math.abs(ball.vy)*.76}
+   if(ball.y+ball.r>B){ball.y=B-ball.r;ball.vy=-Math.abs(ball.vy)*.76}
+   cupPhysics();
+ }else{
+   cupPhysics(); // stopped-ball capture remains active
  }
 }
 function draw(){
  g.clearRect(0,0,W,H);g.fillStyle='#2d8e48';g.fillRect(0,0,W,H);
  let L=Math.max(18,W*.08),w=W-2*L;
- g.fillStyle='#49ad62';rr(L,62,w,H-80,18);g.fill();
- g.fillStyle='rgba(255,255,255,.025)';g.fillRect(W*.37,62,W*.26,H-80);
+ g.fillStyle='#49ad62';rr(L,58,w,H-72,18);g.fill();
+ g.fillStyle='rgba(255,255,255,.025)';g.fillRect(W*.37,58,W*.26,H-72);
  g.fillStyle='#111';g.beginPath();g.arc(hole.x,hole.y,hole.r,0,Math.PI*2);g.fill();
- g.strokeStyle='#eee';g.lineWidth=2;g.beginPath();g.moveTo(hole.x,hole.y);g.lineTo(hole.x,hole.y-70);g.stroke();
- g.fillStyle='#fff';g.beginPath();g.moveTo(hole.x,hole.y-70);g.lineTo(hole.x+34,hole.y-59);g.lineTo(hole.x,hole.y-48);g.closePath();g.fill();
+ g.strokeStyle='#eee';g.lineWidth=2;g.beginPath();g.moveTo(hole.x,hole.y);g.lineTo(hole.x,hole.y-62);g.stroke();
+ g.fillStyle='#fff';g.beginPath();g.moveTo(hole.x,hole.y-62);g.lineTo(hole.x+34,hole.y-51);g.lineTo(hole.x,hole.y-40);g.closePath();g.fill();
  if(drag){
   let dx=ball.x-px,dy=ball.y-py,d=Math.hypot(dx,dy);if(d>MAX_PULL){dx*=MAX_PULL/d;dy*=MAX_PULL/d}
   g.setLineDash([7,8]);g.strokeStyle='#fff9';g.lineWidth=2;g.beginPath();g.moveTo(ball.x,ball.y);g.lineTo(ball.x+dx*1.5,ball.y+dy*1.5);g.stroke();g.setLineDash([]);
