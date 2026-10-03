@@ -96,93 +96,94 @@ function cupPhysics(){
  const rx=ball.x-hole.x, ry=ball.y-hole.y;
  const d=Math.hypot(rx,ry);
  const s=speed();
- const opening=hole.r;
 
- // Outside the actual opening: the cup exerts no force at all.
- // This deliberately removes the old "solid center / invisible bumper" feeling.
- if(d>=opening){
-   if(cupMode==='rim' && d>opening+ball.r*.45) cupMode='free';
+ // Physical overlap begins when the BALL EDGE reaches the CUP EDGE.
+ // This is the key correction: the ball center does NOT have to enter the cup.
+ const contact=hole.r+ball.r;
+ const overlap=contact-d;
+ if(overlap<=0){
+   if(cupMode==='rim' && d>contact+ball.r*.25) cupMode='free';
    return false;
  }
  if(s<.001)return false;
 
- // Maximum-power straight shot remains an overspeed through-putt.
+ // How much of the ball diameter has crossed the cup edge:
+ // 0 = first touch, 1 = roughly the full ball diameter has entered.
+ const entry=Math.max(0,Math.min(1,overlap/(2*ball.r)));
+
  const cross=rx*ball.vy-ry*ball.vx;
  const lineOffset=Math.abs(cross)/Math.max(s,.001);
  const central=lineOffset<ball.r*.34;
+
+ // Full-power central shot: overspeed can cross the cup, but loses energy smoothly.
  if(fullStraightShot && central && s>5.6 && !topWallAfterFast){
    crossedCupFast=true;
-   // Smooth loss across the OPEN cup, never a bounce.
-   ball.vx*=.986; ball.vy*=.986;
+   const loss=.991-.020*entry;
+   ball.vx*=loss; ball.vy*=loss;
    return false;
  }
  if(central && s>8.0){
-   ball.vx*=.989; ball.vy*=.989;
+   const loss=.993-.016*entry;
+   ball.vx*=loss; ball.vy*=loss;
    return false;
  }
 
- // Enter rim state once the ball center has genuinely crossed the cup edge.
  if(cupMode!=='rim'){
    cupMode='rim';
    cupEntrySpeed=s;
    cupTurn=Math.sign(cross);
-   if(cupTurn===0){
-     // Perfectly central moderate/slow entry has no artificial sideways kick.
-     cupTurn=0;
-   }
  }
 
- const depth=Math.max(0,Math.min(1,(opening-d)/opening));
+ const ux=rx/(d||1), uy=ry/(d||1);       // cup center -> ball
+ const inwardX=-ux, inwardY=-uy;
 
- // Perfectly central slow/moderate ball: continue straight into the empty opening.
- // Gravity/energy loss makes it drop only after it is well inside.
- if(cupTurn===0){
-   const smooth=.992-.018*depth;
-   ball.vx*=smooth; ball.vy*=smooth;
-   if(depth>.52 && speed()<5.15){sink();return true}
+ // A very slow ball with substantial body over the opening MUST fall.
+ // It does not need center-to-center alignment.
+ if(entry>=.58 && s<=3.25){
+   sink(); return true;
+ }
+ // Hard safety corresponding to the agreed ~75% body-entry rule.
+ if(entry>=.75 && s<=5.25){
+   sink(); return true;
+ }
+
+ // Perfectly centered moderate/slow entry: continue into the empty cup, no sideways kick.
+ if(Math.abs(cross)<.001){
+   const drag=.993-.026*entry;
+   ball.vx*=drag; ball.vy*=drag;
+   if(entry>.48 && speed()<4.35){sink();return true}
    return false;
  }
 
- // Off-center entry: preserve angular momentum and bend along the INNER RIM.
- // Tangent direction follows the incoming angular momentum. There is NO outward normal impulse.
- const ux=rx/(d||1), uy=ry/(d||1);          // center -> ball
- const tx=cupTurn*(-uy), ty=cupTurn*ux;     // rim tangent
- const inwardX=-ux, inwardY=-uy;            // only inward, never outward
-
+ // Off-center ball follows the INNER LIP. Preserve its incoming angular momentum.
+ const turn=Math.sign(cross)||1;
+ const tx=turn*(-uy), ty=turn*ux;
  const v=speed();
- let vx=ball.vx, vy=ball.vy;
 
- // Continuous curvature, not a sudden redirection.
- // The deeper the unsupported ball is, the more its path follows the rim.
- const tangentBlend=.018+.055*depth;
- vx=vx*(1-tangentBlend)+(tx*v)*tangentBlend;
- vy=vy*(1-tangentBlend)+(ty*v)*tangentBlend;
+ // Continuous curvature starts gently at first overlap and grows with unsupported area.
+ const bend=.012+.075*entry;
+ let vx=ball.vx*(1-bend)+(tx*v)*bend;
+ let vy=ball.vy*(1-bend)+(ty*v)*bend;
 
- // Small inward "fall" makes the orbit radius contract gradually.
- const fall=.010+.020*depth;
+ // Loss of ground support creates an inward/downward component.
+ // Stronger than V12 at low speed so a slowly rolling ball cannot skate across the hole.
+ const slowFactor=Math.max(0,1-Math.min(v,6)/6);
+ const fall=.010+.045*entry+.030*slowFactor*entry;
  vx+=inwardX*fall;
  vy+=inwardY*fall;
 
- // Energy loss is gradual per frame, avoiding the visible sudden brake at first contact.
- const drag=.996-.010*depth;
+ // Noticeable but progressive cup energy loss.
+ const drag=.995-.026*entry-(.010*slowFactor*entry);
  ball.vx=vx*drag;
  ball.vy=vy*drag;
 
  const v2=speed();
- const radialIn=ball.vx*inwardX+ball.vy*inwardY;
- const tang=Math.abs(ball.vx*tx+ball.vy*ty);
 
- // Sink only when the ball has travelled well inside and lost enough energy.
- // No center point collision exists anywhere in this model.
- if(depth>.62 && v2<4.15 && tang<2.65 && radialIn>=-.4){
-   sink();return true;
- }
- if(depth>.78 && v2<4.8){
-   sink();return true;
- }
- if(v2<.14 && depth>.42){
-   sink();return true;
- }
+ // Deep low/moderate-speed overlap is captured regardless of exact center alignment.
+ if(entry>=.50 && v2<=2.65){sink();return true}
+ if(entry>=.68 && v2<=4.25){sink();return true}
+ if(v2<.14 && entry>.32){sink();return true}
+
  return false;
 }
 function physics(){
