@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第一关 v17</title>
+<title>迷你高尔夫 第一关 v18</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#123b22;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;touch-action:none}
 canvas{display:block;width:100vw;height:100dvh;touch-action:none}
@@ -23,7 +23,7 @@ const c=document.getElementById('c'),g=c.getContext('2d'),N=document.getElementB
 let W,H,D=1,strokes=0,won=false,drag=false,px=0,py=0;
 let showFlag=true,fullStraightShot=false,crossedCupFast=false,topWallAfterFast=false;
 let cupMode='free', cupTurn=1, cupEntrySpeed=0, cupCommitted=false;
-let cupArc=0, cupLastAngle=0;
+let cupArc=0, cupLastAngle=0, dropFrames=0, dropStartX=0, dropStartY=0, dropVX=0, dropVY=0;
 let ball={x:0,y:0,r:10,vx:0,vy:0},hole={x:0,y:0,r:25.3};
 const MAX_PULL=175, POWER=.092, FRICTION=.987, STOP=.025;
 const CUP_ENTRY_DRAG=.982;            // shallow contact: modest loss
@@ -51,7 +51,7 @@ function reset(full=true){
  ball.y=H-BOTTOM_SAFE-1.5*ball.r;
  ball.vx=ball.vy=0;drag=false;won=false;
  showFlag=true;fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;
- cupMode='free';cupEntrySpeed=0;cupCommitted=false;cupArc=0;cupLastAngle=0;
+ cupMode='free';cupEntrySpeed=0;cupCommitted=false;cupArc=0;cupLastAngle=0;dropFrames=0;
  M.textContent='';
  if(full){strokes=0;N.textContent='0'}
 }
@@ -96,7 +96,39 @@ function sink(){
 }
 
 
+function startFastDrop(bounceToCenter=false){
+  cupMode='drop';dropFrames=0;
+  dropStartX=ball.x;dropStartY=ball.y;
+  // Keep a trace of real incoming momentum. A very slow lip touch redirects inward,
+  // but gravity now dominates the visible motion instead of creating a slow orbit.
+  const dx=hole.x-ball.x,dy=hole.y-ball.y,d=Math.hypot(dx,dy)||1;
+  const inwardX=dx/d,inwardY=dy/d;
+  if(bounceToCenter){
+    dropVX=ball.vx*.22+inwardX*1.15;
+    dropVY=ball.vy*.22+inwardY*1.15;
+  }else{
+    dropVX=ball.vx*.28;dropVY=ball.vy*.28;
+  }
+  ball.vx=ball.vy=0;
+}
+
+function dropPhysics(){
+  if(cupMode!=='drop')return false;
+  dropFrames++;
+  // 10–14 frames at 60 fps: visually quick, like support suddenly disappearing.
+  // Horizontal motion dies rapidly; apparent vertical fall accelerates by shrinking the ball.
+  const t=Math.min(1,dropFrames/12);
+  const ease=t*t;
+  ball.x+=dropVX*(1-t)*.72;
+  ball.y+=dropVY*(1-t)*.72;
+  ball.x+=(hole.x-ball.x)*(.08+.18*ease);
+  ball.y+=(hole.y-ball.y)*(.08+.18*ease);
+  if(t>=1){sink();cupMode='free';return true;}
+  return false;
+}
+
 function cupPhysics(){
+  if(cupMode==='drop')return dropPhysics();
   const rx=ball.x-hole.x, ry=ball.y-hole.y;
   const d=Math.hypot(rx,ry)||.0001;
   const s=speed();
@@ -111,7 +143,6 @@ function cupPhysics(){
   }
   if(s<.001)return false;
 
-  // How much of one ball diameter has crossed the cup edge.
   const entry=Math.max(0,Math.min(1,overlap/(2*ball.r)));
   const ux=rx/d, uy=ry/d;
   const radial=ball.vx*ux+ball.vy*uy;
@@ -120,7 +151,7 @@ function cupPhysics(){
   const lineOffset=Math.abs(rx*ball.vy-ry*ball.vx)/Math.max(s,.001);
   const central=lineOffset<ball.r*.27;
 
-  // Full-power straight shot: open cup removes energy, but never captures it on first pass.
+  // Keep V17's accepted high-speed behavior unchanged.
   if(fullStraightShot && central && s>5.4 && !topWallAfterFast){
     crossedCupFast=true;
     const loss=.992-.022*entry;
@@ -138,37 +169,34 @@ function cupPhysics(){
     cupLastAngle=Math.atan2(ry,rx);
   }
 
-  // Track real angular travel only for deciding when a visible lip-out has occurred.
   const a=Math.atan2(ry,rx);
   let da=a-cupLastAngle;
   while(da>Math.PI)da-=Math.PI*2;
   while(da<-Math.PI)da+=Math.PI*2;
   cupArc+=Math.abs(da);cupLastAngle=a;
 
-  // Near-center slow entry can fall almost directly.
-  if(central && entry>=.68 && s<=3.0){sink();return true;}
+  // V18 low-speed rule: once enough of a very slow ball is unsupported, gravity wins quickly.
+  // Near-center: drop almost straight. Offset: a brief lip deflection toward the cup, then drop.
+  if(s<=2.15 && entry>=.54){
+    const offsetTouch=!central && Math.abs(tangential)<2.0;
+    startFastDrop(offsetTouch);
+    return dropPhysics();
+  }
+  if(central && entry>=.68 && s<=3.0){
+    startFastDrop(false);return dropPhysics();
+  }
 
-  // 75% body entry commits a non-fast ball to the cup, but NEVER snaps it to center.
   if(entry>=.75 && s<=5.35)cupCommitted=true;
 
-  // V17: no prescribed orbit. Preserve the actual velocity and only apply forces caused by
-  // loss of support plus an inner-lip contact constraint when the ball reaches the cup wall.
   const slow=Math.max(0,1-Math.min(s,6)/6);
   const supportLoss=entry*entry;
-
-  // Smooth energy loss while unsupported.
   const drag=1-(.004+.010*supportLoss+.006*slow*supportLoss);
   ball.vx*=drag;ball.vy*=drag;
 
-  // Gentle inward/down-cup acceleration. This does not choose a circular path.
   const inward=.004+.020*supportLoss+.018*slow*supportLoss;
   ball.vx-=ux*inward;ball.vy-=uy*inward;
 
-  // Inner lip geometry: when sufficiently inside, the ball's OUTER edge rides the cup's INNER edge.
-  // center radius = hole radius - ball radius. Remove only the outward normal component;
-  // keep tangential momentum so the arc emerges naturally from the entry vector.
   const rimR=hole.r-ball.r;
-  const nowS=speed();
   if(entry>=.52 && d>=rimR*.94){
     const outwardV=ball.vx*ux+ball.vy*uy;
     if(outwardV>0){
@@ -176,37 +204,33 @@ function cupPhysics(){
       ball.vx-=ux*outwardV*constraint;
       ball.vy-=uy*outwardV*constraint;
     }
-    // Soft positional correction only prevents the ball center crossing through the cup wall.
-    // It never places the ball onto a precomputed orbit.
     if(d>rimR){
       const excess=d-rimR;
       const corr=Math.min(excess,Math.max(.05,excess*.28));
       ball.x-=ux*corr;ball.y-=uy*corr;
     }
-    // Lip friction acts mainly on tangential motion.
     const lipDrag=cupCommitted?.982:.989;
     ball.vx*=lipDrag;ball.vy*=lipDrag;
   }
 
   const s2=speed();
   const d2=Math.hypot(ball.x-hole.x,ball.y-hole.y);
-
-  // Once committed, let the real curved motion lose radius/energy until it drops.
   if(cupCommitted){
-    if(d2<=hole.r*.28 && s2<=2.8){sink();return true;}
-    if(s2<.18 && entry>.55){sink();return true;}
+    // Medium-speed captured balls still get a visible short rim action, but do not linger.
+    if((d2<=hole.r*.34 && s2<=3.15) || (cupArc>.42 && s2<=2.55)){
+      startFastDrop(false);return dropPhysics();
+    }
+    if(s2<.18 && entry>.55){startFastDrop(false);return dropPhysics();}
   }
 
-  // A faster offset ball may ride a visible arc and then leave tangentially under its own velocity.
-  // No radial kick is added; leaving happens only if its real velocity carries it back outside.
   if(!cupCommitted && cupArc>.65 && entry<.42 && radial>0){
     cupMode='free';cupArc=0;
   }
   return false;
 }
-
 function physics(){
   if(won)return;
+  if(cupMode==='drop'){dropPhysics();return;}
   if(speed()>0){
     ball.x+=ball.vx;ball.y+=ball.vy;
 
@@ -271,7 +295,8 @@ function draw(){
    g.setLineDash([7,8]);g.strokeStyle='#fff9';g.lineWidth=2;g.beginPath();g.moveTo(ball.x,ball.y);g.lineTo(ball.x+dx*1.5,ball.y+dy*1.5);g.stroke();g.setLineDash([]);
    g.strokeStyle='#fff5';g.beginPath();g.moveTo(ball.x,ball.y);g.lineTo(px,py);g.stroke();
  }
- g.fillStyle='#fff';g.beginPath();g.arc(ball.x,ball.y,ball.r,0,Math.PI*2);g.fill();g.strokeStyle='#bbb';g.stroke();
+ const drawR=cupMode==='drop'?ball.r*(1-.72*Math.min(1,dropFrames/12)):ball.r;
+ g.fillStyle='#fff';g.beginPath();g.arc(ball.x,ball.y,drawR,0,Math.PI*2);g.fill();g.strokeStyle='#bbb';g.stroke();
 }
 c.addEventListener('touchstart',down,{passive:false});c.addEventListener('touchmove',move,{passive:false});c.addEventListener('touchend',up,{passive:false});
 c.addEventListener('mousedown',down);addEventListener('mousemove',move);addEventListener('mouseup',up);
