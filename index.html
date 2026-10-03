@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第一关 v5</title>
+<title>迷你高尔夫 第一关 v6</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#102818;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;touch-action:none}
 #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
@@ -25,16 +25,25 @@ const c=document.getElementById('c'),ctx=c.getContext('2d'),strokesEl=document.g
 let W,H,dpr=1,strokes=0,won=false,dragging=false,sx=0,sy=0,px=0,py=0;
 let ball={x:0,y:0,r:10,vx:0,vy:0},hole={x:0,y:0,r:25.3};
 let cup={active:false,angle:0,omega:0,radius:0,turn:0,maxTurn:0,willSink:false,entrySpeed:0};
-let inHoleZone=false;
+let course={left:0,right:0,top:0,bottom:0};
+let inHoleZone=false, passThrough=false;
 const friction=.985,stop=.045,maxDrag=150,power=.075;
 const captureSpeed=2.25;
 function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;c.width=W*dpr;c.height=H*dpr;c.style.width=W+'px';c.style.height=H+'px';ctx.setTransform(dpr,0,0,dpr,0,0);resetPositions(false)}
-function resetPositions(full=true){ball.r=Math.max(9,Math.min(12,W*.025));hole.r=ball.r*2.53;ball.x=W/2;ball.y=H*.86;ball.vx=ball.vy=0;hole.x=W/2;hole.y=H*.14;dragging=false;won=false;cup.active=false;inHoleZone=false;msg.textContent='';if(full){strokes=0;strokesEl.textContent=strokes}}
+function resetPositions(full=true){
+ ball.r=Math.max(9,Math.min(12,W*.025)); hole.r=ball.r*2.53;
+ course.left=Math.max(38,W*.22); course.right=W-course.left;
+ course.top=Math.max(58,H*.055); course.bottom=H-24;
+ hole.x=W/2; hole.y=course.top+hole.r*3.8;
+ ball.x=W/2; ball.y=course.bottom-ball.r*2.4; ball.vx=ball.vy=0;
+ dragging=false;won=false;cup.active=false;inHoleZone=false;passThrough=false;msg.textContent='';
+ if(full){strokes=0;strokesEl.textContent=strokes}
+}
 function speed(){return Math.hypot(ball.vx,ball.vy)}
 function pos(e){let t=e.touches?e.touches[0]:e;return{x:t.clientX,y:t.clientY}}
 function down(e){if(won||cup.active||speed()>.08)return;let p=pos(e);if(Math.hypot(p.x-ball.x,p.y-ball.y)<=ball.r*2.2){dragging=true;sx=ball.x;sy=ball.y;px=p.x;py=p.y;e.preventDefault()}}
 function move(e){if(!dragging)return;let p=pos(e);px=p.x;py=p.y;e.preventDefault()}
-function up(e){if(!dragging)return;dragging=false;let dx=sx-px,dy=sy-py,dist=Math.hypot(dx,dy);if(dist<5)return;if(dist>maxDrag){dx*=maxDrag/dist;dy*=maxDrag/dist}ball.vx=dx*power;ball.vy=dy*power;strokes++;strokesEl.textContent=strokes;e.preventDefault()}
+function up(e){if(!dragging)return;dragging=false;let dx=sx-px,dy=sy-py,dist=Math.hypot(dx,dy);if(dist<5)return;if(dist>maxDrag){dx*=maxDrag/dist;dy*=maxDrag/dist}ball.vx=dx*power;ball.vy=dy*power;passThrough=false;strokes++;strokesEl.textContent=strokes;e.preventDefault()}
 c.addEventListener('touchstart',down,{passive:false});c.addEventListener('touchmove',move,{passive:false});c.addEventListener('touchend',up,{passive:false});
 c.addEventListener('mousedown',down);addEventListener('mousemove',move);addEventListener('mouseup',up);
 document.getElementById('reset').onclick=()=>resetPositions(true);
@@ -71,57 +80,63 @@ function physics(){
  if(cup.active){cupPhysics();return}
  let s=speed();
  if(s<=0){
-   // A stopped ball whose center is inside the effective cup cannot remain there.
    let ds=Math.hypot(ball.x-hole.x,ball.y-hole.y);
-   if(ds<=hole.r-ball.r*.10) enterCup(ds,0);
+   if(!passThrough && ds<=hole.r-ball.r*.10) enterCup(ds,0);
    return;
  }
- const prevX=ball.x, prevY=ball.y;
- ball.x+=ball.vx;ball.y+=ball.vy;
- ball.vx*=friction;ball.vy*=friction;
- if(Math.abs(ball.vx)<stop)ball.vx=0;if(Math.abs(ball.vy)<stop)ball.vy=0;
- const margin=18;
- if(ball.x-ball.r<margin){ball.x=margin+ball.r;ball.vx=Math.abs(ball.vx)*.78}
- if(ball.x+ball.r>W-margin){ball.x=W-margin-ball.r;ball.vx=-Math.abs(ball.vx)*.78}
- if(ball.y-ball.r<70){ball.y=70+ball.r;ball.vy=Math.abs(ball.vy)*.78}
- if(ball.y+ball.r>H-18){ball.y=H-18-ball.r;ball.vy=-Math.abs(ball.vy)*.78}
+
+ ball.x+=ball.vx; ball.y+=ball.vy;
+ ball.vx*=friction; ball.vy*=friction;
+ if(Math.abs(ball.vx)<stop)ball.vx=0;
+ if(Math.abs(ball.vy)<stop)ball.vy=0;
+
+ // Visible course edge = physical collision edge.
+ if(ball.x-ball.r<course.left){
+   ball.x=course.left+ball.r; ball.vx=Math.abs(ball.vx)*.72;
+ }
+ if(ball.x+ball.r>course.right){
+   ball.x=course.right-ball.r; ball.vx=-Math.abs(ball.vx)*.72;
+ }
+ if(ball.y-ball.r<course.top){
+   ball.y=course.top+ball.r; ball.vy=Math.abs(ball.vy)*.62;
+ }
+ if(ball.y+ball.r>course.bottom){
+   ball.y=course.bottom-ball.r; ball.vy=-Math.abs(ball.vy)*.72;
+ }
 
  let d=Math.hypot(ball.x-hole.x,ball.y-hole.y), now=speed();
  const effectiveR=hole.r-ball.r*.10;
  const contactR=hole.r+ball.r*.75;
 
- // Rule 1: slow enough + center inside effective cup => guaranteed capture.
- if(d<=effectiveR && now<=captureSpeed){
+ // Once a shot has crossed the cup too fast, it cannot be re-captured
+ // after the top-wall rebound during the same stroke.
+ if(!passThrough && d<=effectiveR && now<=captureSpeed){
    if(d<=ball.r*.22 && now<1.45) finish();
    else enterCup(d,now);
    inHoleZone=true;
    return;
  }
 
- // Rule 2: any fast traversal/contact loses substantial energy but preserves forward direction.
  if(d<contactR && !inHoleZone){
-   const vx0=ball.vx, vy0=ball.vy;
-   const pre=Math.hypot(vx0,vy0);
-   if(pre>0){
-     // Strong cup energy loss: exit at roughly 42–58% depending on depth of contact.
+   if(now>captureSpeed){
+     // High-speed cup crossing: strong energy loss, direction never reverses here.
      const depth=Math.max(0,Math.min(1,(contactR-d)/contactR));
-     const lossFactor=.58-depth*.16;
-     ball.vx=vx0*lossFactor;
-     ball.vy=vy0*lossFactor;
+     const factor=.50-depth*.12;
+     ball.vx*=factor; ball.vy*=factor;
+     passThrough=true;
    }
    inHoleZone=true;
  } else if(d>=contactR){
    inHoleZone=false;
  }
 
- // Rule 3: if friction makes it stop inside cup after contact, capture it.
- if(speed()<=stop && d<=effectiveR) enterCup(d,0);
+ if(!passThrough && speed()<=stop && d<=effectiveR) enterCup(d,0);
 }
 function draw(){
  ctx.clearRect(0,0,W,H);
- let left=Math.max(26,W*.13),right=W-left;
- ctx.fillStyle='#48a85c';ctx.beginPath();ctx.roundRect(left,55,right-left,H-80,30);ctx.fill();
- ctx.fillStyle='rgba(255,255,255,.035)';ctx.fillRect(W*.38,55,W*.24,H-80);
+ ctx.fillStyle='#48a85c';ctx.beginPath();ctx.rect(course.left,course.top,course.right-course.left,course.bottom-course.top);ctx.fill();
+ ctx.strokeStyle='rgba(255,255,255,.28)';ctx.lineWidth=2;ctx.strokeRect(course.left,course.top,course.right-course.left,course.bottom-course.top);
+ ctx.fillStyle='rgba(255,255,255,.035)';ctx.fillRect(W*.43,course.top,W*.14,course.bottom-course.top);
  ctx.fillStyle='#101010';ctx.beginPath();ctx.arc(hole.x,hole.y,hole.r,0,Math.PI*2);ctx.fill();
  ctx.strokeStyle='rgba(255,255,255,.35)';ctx.lineWidth=2;ctx.stroke();
  ctx.strokeStyle='#eee';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(hole.x,hole.y);ctx.lineTo(hole.x,hole.y-75);ctx.stroke();
