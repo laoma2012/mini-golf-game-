@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第一关 V19</title>
+<title>迷你高尔夫 第一关 V20 · Sound</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#123b22;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;touch-action:none}
 canvas{display:block;width:100vw;height:100dvh;touch-action:none}
@@ -24,6 +24,7 @@ let W,H,D=1,strokes=0,won=false,drag=false,px=0,py=0;
 let showFlag=true,fullStraightShot=false,crossedCupFast=false,topWallAfterFast=false;
 let cupMode='free', cupTurn=1, cupEntrySpeed=0;
 let ball={x:0,y:0,r:10,vx:0,vy:0,z:0,vz:0,alpha:1,scale:1},hole={x:0,y:0,r:25.3};
+let AC=null,master=null,rollSrc=null,rollGain=null,rollFilter=null,lastRimSound=0;
 const MAX_PULL=175, POWER=.092, FRICTION=.987, STOP=.025;
 const CUP_ENTRY_DRAG=.982;            // shallow contact: modest loss
 const CUP_ORBIT_DRAG=.955;            // while riding the lip: strong loss
@@ -38,6 +39,18 @@ const BOTTOM_SAFE=88;               // Safari clearance, but preserve a longer l
 const TOP_SAFE=72;
 
 function rr(x,y,w,h,r){g.beginPath();g.moveTo(x+r,y);g.lineTo(x+w-r,y);g.quadraticCurveTo(x+w,y,x+w,y+r);g.lineTo(x+w,y+h-r);g.quadraticCurveTo(x+w,y+h,x+w-r,y+h);g.lineTo(x+r,y+h);g.quadraticCurveTo(x,y+h,x,y+h-r);g.lineTo(x,y+r);g.quadraticCurveTo(x,y,x+r,y);g.closePath()}
+function audioInit(){
+ if(AC)return; AC=new (window.AudioContext||window.webkitAudioContext)(); master=AC.createGain();master.gain.value=.72;master.connect(AC.destination);
+ const n=AC.sampleRate*2,b=AC.createBuffer(1,n,AC.sampleRate),a=b.getChannelData(0);for(let i=0;i<n;i++)a[i]=Math.random()*2-1;
+ rollSrc=AC.createBufferSource();rollSrc.buffer=b;rollSrc.loop=true;rollFilter=AC.createBiquadFilter();rollFilter.type='bandpass';rollFilter.frequency.value=950;rollFilter.Q.value=.55;rollGain=AC.createGain();rollGain.gain.value=0;rollSrc.connect(rollFilter).connect(rollGain).connect(master);rollSrc.start();
+}
+function tone(freq,dur,vol=.1,type='sine',endFreq=null){if(!AC)return;const t=AC.currentTime,o=AC.createOscillator(),gn=AC.createGain();o.type=type;o.frequency.setValueAtTime(freq,t);if(endFreq)o.frequency.exponentialRampToValueAtTime(endFreq,t+dur);gn.gain.setValueAtTime(Math.max(.0001,vol),t);gn.gain.exponentialRampToValueAtTime(.0001,t+dur);o.connect(gn).connect(master);o.start(t);o.stop(t+dur+.02)}
+function noiseHit(dur=.04,vol=.08,freq=1600){if(!AC)return;const n=Math.max(1,Math.floor(AC.sampleRate*dur)),b=AC.createBuffer(1,n,AC.sampleRate),a=b.getChannelData(0);for(let i=0;i<n;i++)a[i]=(Math.random()*2-1)*Math.pow(1-i/n,2);const src=AC.createBufferSource(),f=AC.createBiquadFilter(),gn=AC.createGain();src.buffer=b;f.type='bandpass';f.frequency.value=freq;f.Q.value=.8;gn.gain.value=vol;src.connect(f).connect(gn).connect(master);src.start()}
+function sfxStrike(v){audioInit();tone(620,.028,.055+.045*Math.min(1,v/10),'triangle',410);noiseHit(.018,.025,2400)}
+function sfxWall(v){audioInit();const q=Math.min(1,v/10);tone(390+220*q,.045+.018*q,.07+.11*q,'triangle',250+120*q);noiseHit(.028,.035+.05*q,1800+700*q)}
+function sfxRim(v){audioInit();const now=performance.now();if(now-lastRimSound<65)return;lastRimSound=now;const q=Math.min(1,v/7);tone(1050+350*q,.022,.035+.05*q,'triangle',720);noiseHit(.016,.018+.025*q,3200)}
+function sfxCup(v){audioInit();const q=Math.min(1,v/6);tone(720+120*q,.035,.09+.04*q,'triangle',430);setTimeout(()=>tone(185,.13,.10+.04*q,'sine',105),22);setTimeout(()=>noiseHit(.07,.05+.025*q,620),28)}
+function updateRoll(){if(!AC||!rollGain)return;const s=speed(),active=!won&&cupMode!=='drop'&&s>.12;const target=active?Math.min(.055,.006+s*.0042):0;rollGain.gain.setTargetAtTime(target,AC.currentTime,.035);rollFilter.frequency.setTargetAtTime(650+Math.min(1100,s*80),AC.currentTime,.05)}
 function speed(){return Math.hypot(ball.vx,ball.vy)}
 function reset(full=true){
  ball.r=Math.max(9,Math.min(12,W*.024)); hole.r=ball.r*2.53; // fixed standard: cup diameter ≈ 2.53 × ball diameter
@@ -59,7 +72,7 @@ function resize(){
  c.width=W*D;c.height=H*D;g.setTransform(D,0,0,D,0,0);reset(false)
 }
 function pos(e){let t=e.touches?e.touches[0]:e;return{x:t.clientX,y:t.clientY}}
-function down(e){if(won||speed()>.08)return;let q=pos(e);if(Math.hypot(q.x-ball.x,q.y-ball.y)<ball.r*3.0){drag=true;showFlag=false;px=q.x;py=q.y;e.preventDefault()}}
+function down(e){audioInit();if(AC&&AC.state==='suspended')AC.resume();if(won||speed()>.08)return;let q=pos(e);if(Math.hypot(q.x-ball.x,q.y-ball.y)<ball.r*3.0){drag=true;showFlag=false;px=q.x;py=q.y;e.preventDefault()}}
 function move(e){if(!drag)return;let q=pos(e);px=q.x;py=q.y;e.preventDefault()}
 function up(e){
  if(!drag)return;drag=false;
@@ -69,7 +82,7 @@ function up(e){
  const aimX=dx/(Math.hypot(dx,dy)||1);
  fullStraightShot=(rawD>=MAX_PULL*.90 && Math.abs(aimX)<.085);
  crossedCupFast=false;topWallAfterFast=false;
- ball.vx=dx*POWER;ball.vy=dy*POWER;strokes++;N.textContent=strokes;e.preventDefault()
+ ball.vx=dx*POWER;ball.vy=dy*POWER;sfxStrike(Math.hypot(ball.vx,ball.vy));strokes++;N.textContent=strokes;e.preventDefault()
 }
 function sink(){
  if(won)return;
@@ -97,6 +110,7 @@ function sink(){
 
 function beginDrop(){
   if(cupMode==='drop')return;
+  sfxCup(speed());
   cupMode='drop';
   ball.z=0;ball.vz=.55;
 }
@@ -128,6 +142,7 @@ function cupPhysics(){
   const tangential=-ball.vx*uy+ball.vy*ux;
   const lineOffset=Math.abs(rx*ball.vy-ry*ball.vx)/Math.max(s,.001);
   const central=lineOffset<ball.r*.27;
+  if(entry>.18 && Math.abs(radial)>.22)sfxRim(s);
 
   // Keep the deliberately protected first-hole full-power straight shot.
   if(fullStraightShot && central && s>5.4 && !topWallAfterFast){
@@ -194,10 +209,10 @@ function physics(){
  const laneH=B-T;
  const laneW=Math.min(W*.82,laneH/2.51);
  const L=(W-laneW)/2,R=(W+laneW)/2;
- if(ball.x-ball.r<L){ball.x=L+ball.r;ball.vx=Math.abs(ball.vx)*.78}
- if(ball.x+ball.r>R){ball.x=R-ball.r;ball.vx=-Math.abs(ball.vx)*.78}
+ if(ball.x-ball.r<L){const iv=speed();ball.x=L+ball.r;ball.vx=Math.abs(ball.vx)*.78;sfxWall(iv)}
+ if(ball.x+ball.r>R){const iv=speed();ball.x=R-ball.r;ball.vx=-Math.abs(ball.vx)*.78;sfxWall(iv)}
  if(ball.y-ball.r<T){
- ball.y=T+ball.r;
+ const iv=speed();ball.y=T+ball.r;sfxWall(iv);
  if(fullStraightShot && crossedCupFast){
    topWallAfterFast=true;
    // First-hole full-power protection: visible rebound, with heavy energy loss.
@@ -207,7 +222,7 @@ function physics(){
    ball.vy=Math.abs(ball.vy)*.78;
  }
 }
- if(ball.y+ball.r>B){ball.y=B-ball.r;ball.vy=-Math.abs(ball.vy)*.78}
+ if(ball.y+ball.r>B){const iv=speed();ball.y=B-ball.r;ball.vy=-Math.abs(ball.vy)*.78;sfxWall(iv)}
  // IMPORTANT: this check happens BEFORE cupPhysics.
  // A maximum-power straight shot must never be captured on the rebound.
  if(topWallAfterFast && ball.vy>0){
@@ -249,6 +264,6 @@ function draw(){
 c.addEventListener('touchstart',down,{passive:false});c.addEventListener('touchmove',move,{passive:false});c.addEventListener('touchend',up,{passive:false});
 c.addEventListener('mousedown',down);addEventListener('mousemove',move);addEventListener('mouseup',up);
 document.getElementById('reset').onclick=()=>reset(true);addEventListener('resize',resize);
-function loop(){physics();draw();requestAnimationFrame(loop)}resize();loop();
+function loop(){physics();updateRoll();draw();requestAnimationFrame(loop)}resize();loop();
 })();
 </script></body></html>
