@@ -1,21 +1,152 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><title>迷你高尔夫 第一关 v3</title><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#102818;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;touch-action:none}#wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}canvas{display:block;background:#2f8f46;touch-action:none}#hud{position:fixed;left:0;right:0;top:max(12px,env(safe-area-inset-top));text-align:center;color:white;pointer-events:none;text-shadow:0 1px 3px #000;font-weight:700}#title{font-size:18px}.small{font-size:13px;margin-top:4px;font-weight:500}#msg{position:fixed;left:50%;top:44%;transform:translate(-50%,-50%);color:#fff;text-align:center;font-size:26px;font-weight:800;text-shadow:0 2px 6px #000;pointer-events:none;white-space:nowrap}#reset{position:fixed;right:14px;bottom:max(18px,env(safe-area-inset-bottom));border:0;border-radius:18px;padding:9px 14px;background:#fff;color:#173c21;font-weight:700}</style></head><body><div id="wrap"><canvas id="c"></canvas></div><div id="hud"><div id="title">第一关 · PAR 2　杆数：<span id="strokes">0</span></div><div class="small">偏心球会沿洞口旋转 · 力度过大会冲过球洞</div></div><div id="msg"></div><button id="reset">重新开始</button><script>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>迷你高尔夫 第一关 v4</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#102818;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;touch-action:none}
+#wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+canvas{display:block;background:#2f8f46;touch-action:none}
+#hud{position:fixed;left:0;right:0;top:max(12px,env(safe-area-inset-top));text-align:center;color:white;pointer-events:none;text-shadow:0 1px 3px #000;font-weight:700}
+#title{font-size:18px}.small{font-size:13px;margin-top:4px;font-weight:500}
+#msg{position:fixed;left:50%;top:44%;transform:translate(-50%,-50%);color:#fff;text-align:center;font-size:26px;font-weight:800;text-shadow:0 2px 6px #000;pointer-events:none;white-space:nowrap}
+#reset{position:fixed;right:14px;bottom:max(18px,env(safe-area-inset-bottom));border:0;border-radius:18px;padding:9px 14px;background:#fff;color:#173c21;font-weight:700}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<div id="hud"><div id="title">第一关 · PAR 2　杆数：<span id="strokes">0</span></div><div class="small">偏心会涮锅 · 擦洞/冲洞都会明显减速</div></div>
+<div id="msg"></div><button id="reset">重新开始</button>
+<script>
 (function(){
 const c=document.getElementById('c'),ctx=c.getContext('2d'),strokesEl=document.getElementById('strokes'),msg=document.getElementById('msg');
 let W,H,dpr=1,strokes=0,won=false,dragging=false,sx=0,sy=0,px=0,py=0;
 let ball={x:0,y:0,r:10,vx:0,vy:0},hole={x:0,y:0,r:25.3};
-let cup={active:false,angle:0,omega:0,radius:0,radialV:0,turn:0,willSink:false};
-const friction=.985,stop=.045,maxDrag=150,power=.075,sinkSpeed=2.25,captureFactor=.88;
+let cup={active:false,angle:0,omega:0,radius:0,turn:0,maxTurn:0,willSink:false,entrySpeed:0};
+let inHoleZone=false;
+const friction=.985,stop=.045,maxDrag=150,power=.075;
+const captureSpeed=2.25;
 function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;c.width=W*dpr;c.height=H*dpr;c.style.width=W+'px';c.style.height=H+'px';ctx.setTransform(dpr,0,0,dpr,0,0);resetPositions(false)}
-function resetPositions(full=true){ball.r=Math.max(9,Math.min(12,W*.025));hole.r=ball.r*2.53;ball.x=W/2;ball.y=H*.86;ball.vx=ball.vy=0;hole.x=W/2;hole.y=H*.14;dragging=false;won=false;cup.active=false;msg.textContent='';if(full){strokes=0;strokesEl.textContent=strokes}}
-function speed(){return Math.hypot(ball.vx,ball.vy)}function pos(e){let t=e.touches?e.touches[0]:e;return{x:t.clientX,y:t.clientY}}
+function resetPositions(full=true){ball.r=Math.max(9,Math.min(12,W*.025));hole.r=ball.r*2.53;ball.x=W/2;ball.y=H*.86;ball.vx=ball.vy=0;hole.x=W/2;hole.y=H*.14;dragging=false;won=false;cup.active=false;inHoleZone=false;msg.textContent='';if(full){strokes=0;strokesEl.textContent=strokes}}
+function speed(){return Math.hypot(ball.vx,ball.vy)}
+function pos(e){let t=e.touches?e.touches[0]:e;return{x:t.clientX,y:t.clientY}}
 function down(e){if(won||cup.active||speed()>.08)return;let p=pos(e);if(Math.hypot(p.x-ball.x,p.y-ball.y)<=ball.r*2.2){dragging=true;sx=ball.x;sy=ball.y;px=p.x;py=p.y;e.preventDefault()}}
 function move(e){if(!dragging)return;let p=pos(e);px=p.x;py=p.y;e.preventDefault()}
 function up(e){if(!dragging)return;dragging=false;let dx=sx-px,dy=sy-py,dist=Math.hypot(dx,dy);if(dist<5)return;if(dist>maxDrag){dx*=maxDrag/dist;dy*=maxDrag/dist}ball.vx=dx*power;ball.vy=dy*power;strokes++;strokesEl.textContent=strokes;e.preventDefault()}
-c.addEventListener('touchstart',down,{passive:false});c.addEventListener('touchmove',move,{passive:false});c.addEventListener('touchend',up,{passive:false});c.addEventListener('mousedown',down);addEventListener('mousemove',move);addEventListener('mouseup',up);document.getElementById('reset').onclick=()=>resetPositions(true);
-function finish(){won=true;cup.active=false;ball.vx=ball.vy=0;ball.x=hole.x;ball.y=hole.y;msg.innerHTML=strokes===1?'EAGLE!<br><span style="font-size:16px">一杆进洞 · 额外奖励</span>':(strokes===2?'PAR':'完成 · '+strokes+' 杆')}
-function enterCup(d,now){let rx=ball.x-hole.x,ry=ball.y-hole.y;let cross=rx*ball.vy-ry*ball.vx;let offset=d/(hole.r||1);cup.active=true;cup.angle=Math.atan2(ry,rx);cup.radius=Math.max(ball.r*.35,d);cup.omega=(cross>=0?1:-1)*Math.max(.055,Math.min(.16,now*.055));cup.radialV=-Math.max(.08,now*.035);cup.turn=0;cup.willSink=(offset<.70&&now<1.75)||(offset<.86&&now<1.15);ball.vx=ball.vy=0}
-function cupPhysics(){cup.turn+=Math.abs(cup.omega);cup.omega*=.992;if(cup.willSink){cup.radialV-=.004;cup.radius+=cup.radialV;cup.radius*=.994;if(cup.radius<=ball.r*.25||cup.turn>Math.PI*1.8){finish();return}}else{cup.radius+=Math.max(.02,-cup.radialV*.18);cup.radialV*=.96;if(cup.turn>Math.PI*.75){let tx=-Math.sin(cup.angle),ty=Math.cos(cup.angle),v=Math.max(1.0,Math.abs(cup.omega)*cup.radius*1.15);ball.vx=tx*v*Math.sign(cup.omega);ball.vy=ty*v*Math.sign(cup.omega);ball.x=hole.x+Math.cos(cup.angle)*(hole.r+ball.r*.3);ball.y=hole.y+Math.sin(cup.angle)*(hole.r+ball.r*.3);cup.active=false;return}}cup.angle+=cup.omega;ball.x=hole.x+Math.cos(cup.angle)*cup.radius;ball.y=hole.y+Math.sin(cup.angle)*cup.radius}
-function physics(){if(won)return;if(cup.active){cupPhysics();return}let s=speed();if(s>0){ball.x+=ball.vx;ball.y+=ball.vy;ball.vx*=friction;ball.vy*=friction;if(Math.abs(ball.vx)<stop)ball.vx=0;if(Math.abs(ball.vy)<stop)ball.vy=0;const margin=18;if(ball.x-ball.r<margin){ball.x=margin+ball.r;ball.vx=Math.abs(ball.vx)*.78}if(ball.x+ball.r>W-margin){ball.x=W-margin-ball.r;ball.vx=-Math.abs(ball.vx)*.78}if(ball.y-ball.r<70){ball.y=70+ball.r;ball.vy=Math.abs(ball.vy)*.78}if(ball.y+ball.r>H-18){ball.y=H-18-ball.r;ball.vy=-Math.abs(ball.vy)*.78}let d=Math.hypot(ball.x-hole.x,ball.y-hole.y),now=speed();if(d<hole.r*captureFactor&&now<=sinkSpeed){if(d<ball.r*.22&&now<1.35)finish();else enterCup(d,now)}}}
-function draw(){ctx.clearRect(0,0,W,H);let left=Math.max(26,W*.13),right=W-left;ctx.fillStyle='#48a85c';ctx.beginPath();ctx.roundRect(left,55,right-left,H-80,30);ctx.fill();ctx.fillStyle='rgba(255,255,255,.035)';ctx.fillRect(W*.38,55,W*.24,H-80);ctx.fillStyle='#101010';ctx.beginPath();ctx.arc(hole.x,hole.y,hole.r,0,Math.PI*2);ctx.fill();ctx.strokeStyle='rgba(255,255,255,.35)';ctx.lineWidth=2;ctx.stroke();ctx.strokeStyle='#eee';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(hole.x,hole.y);ctx.lineTo(hole.x,hole.y-75);ctx.stroke();ctx.fillStyle='#f3f3f3';ctx.beginPath();ctx.moveTo(hole.x,hole.y-75);ctx.lineTo(hole.x+35,hole.y-64);ctx.lineTo(hole.x,hole.y-52);ctx.closePath();ctx.fill();if(dragging){let dx=sx-px,dy=sy-py,d=Math.hypot(dx,dy);if(d>maxDrag){dx*=maxDrag/d;dy*=maxDrag/d}ctx.setLineDash([7,7]);ctx.strokeStyle='rgba(255,255,255,.8)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(ball.x,ball.y);ctx.lineTo(ball.x+dx*1.45,ball.y+dy*1.45);ctx.stroke();ctx.setLineDash([]);ctx.strokeStyle='rgba(255,255,255,.55)';ctx.beginPath();ctx.moveTo(ball.x,ball.y);ctx.lineTo(px,py);ctx.stroke()}ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#bbb';ctx.lineWidth=1;ctx.stroke();ctx.fillStyle='rgba(255,255,255,.75)';ctx.font='12px -apple-system,sans-serif';ctx.textAlign='center';ctx.fillText('偏心会涮锅 · 速度太快会冲过',hole.x,hole.y+hole.r+22)}
-function loop(){physics();draw();requestAnimationFrame(loop)}if(!ctx.roundRect){ctx.roundRect=function(x,y,w,h,r){this.rect(x,y,w,h)}}addEventListener('resize',resize);resize();loop();})();
-</script></body></html>
+c.addEventListener('touchstart',down,{passive:false});c.addEventListener('touchmove',move,{passive:false});c.addEventListener('touchend',up,{passive:false});
+c.addEventListener('mousedown',down);addEventListener('mousemove',move);addEventListener('mouseup',up);
+document.getElementById('reset').onclick=()=>resetPositions(true);
+
+function finish(){
+ won=true;cup.active=false;ball.vx=ball.vy=0;ball.x=hole.x;ball.y=hole.y;
+ msg.innerHTML=strokes===1?'EAGLE!<br><span style="font-size:16px">一杆进洞 · 额外奖励</span>':(strokes===2?'PAR':'完成 · '+strokes+' 杆');
+}
+function enterCup(d,now){
+ const rx=ball.x-hole.x, ry=ball.y-hole.y;
+ const cross=rx*ball.vy-ry*ball.vx;
+ const offset=d/hole.r;
+ const maxOrbit=Math.max(1,hole.r-ball.r*.98); // ball outer edge stays inside cup
+ cup.active=true;
+ cup.angle=Math.atan2(ry,rx);
+ cup.radius=Math.min(maxOrbit,Math.max(ball.r*.18,d*.72));
+ cup.entrySpeed=now;
+ cup.omega=(cross>=0?1:-1)*(.045+Math.min(.12,now*.045));
+ cup.turn=0;
+ // Faster captured balls may travel farther, but never more than 1.5 turns.
+ cup.maxTurn=Math.min(Math.PI*3, Math.PI*(.45+now*.72));
+ cup.willSink=(offset<.72&&now<1.85)||(offset<.86&&now<1.20);
+ ball.vx=ball.vy=0;
+}
+function ejectCup(){
+ const sign=Math.sign(cup.omega)||1;
+ const tx=-Math.sin(cup.angle)*sign, ty=Math.cos(cup.angle)*sign;
+ // Lip-out loses substantial energy.
+ const exitSpeed=Math.max(.35,Math.min(1.15,cup.entrySpeed*.38));
+ ball.vx=tx*exitSpeed; ball.vy=ty*exitSpeed;
+ const exitR=Math.max(1,hole.r-ball.r*.98);
+ ball.x=hole.x+Math.cos(cup.angle)*exitR;
+ ball.y=hole.y+Math.sin(cup.angle)*exitR;
+ cup.active=false; inHoleZone=true;
+}
+function cupPhysics(){
+ cup.turn+=Math.abs(cup.omega);
+ cup.omega*=.982; // continuous energy loss
+ if(cup.willSink){
+   // Spiral inward: no fixed circular rail.
+   const progress=Math.min(1,cup.turn/Math.max(.1,cup.maxTurn));
+   cup.radius*=.982-(progress*.004);
+   cup.angle+=cup.omega;
+   ball.x=hole.x+Math.cos(cup.angle)*cup.radius;
+   ball.y=hole.y+Math.sin(cup.angle)*cup.radius;
+   // irreversible capture point
+   if(cup.radius<=ball.r*.18 || cup.turn>=cup.maxTurn){finish()}
+ }else{
+   // Still supported by lip: can lip out, but only before irreversible capture.
+   cup.radius=Math.min(hole.r-ball.r*.98,cup.radius*1.002);
+   cup.angle+=cup.omega;
+   ball.x=hole.x+Math.cos(cup.angle)*cup.radius;
+   ball.y=hole.y+Math.sin(cup.angle)*cup.radius;
+   if(cup.turn>=Math.min(cup.maxTurn,Math.PI*1.65)) ejectCup();
+ }
+}
+function applyCupResistance(d,now){
+ // Any effective contact with the cup removes energy.
+ const contact=Math.max(0,1-d/(hole.r+ball.r));
+ if(contact<=0)return;
+ const factor=Math.max(.48,.82-contact*.24);
+ ball.vx*=factor; ball.vy*=factor;
+}
+function physics(){
+ if(won)return;
+ if(cup.active){cupPhysics();return}
+ let s=speed();
+ if(s<=0)return;
+ ball.x+=ball.vx;ball.y+=ball.vy;
+ ball.vx*=friction;ball.vy*=friction;
+ if(Math.abs(ball.vx)<stop)ball.vx=0;if(Math.abs(ball.vy)<stop)ball.vy=0;
+ const margin=18;
+ if(ball.x-ball.r<margin){ball.x=margin+ball.r;ball.vx=Math.abs(ball.vx)*.78}
+ if(ball.x+ball.r>W-margin){ball.x=W-margin-ball.r;ball.vx=-Math.abs(ball.vx)*.78}
+ if(ball.y-ball.r<70){ball.y=70+ball.r;ball.vy=Math.abs(ball.vy)*.78}
+ if(ball.y+ball.r>H-18){ball.y=H-18-ball.r;ball.vy=-Math.abs(ball.vy)*.78}
+
+ let d=Math.hypot(ball.x-hole.x,ball.y-hole.y),now=speed();
+ const touching=d<hole.r+ball.r*.82;
+ if(touching && !inHoleZone){
+   applyCupResistance(d,now);
+   now=speed();
+   // Only genuinely capturable balls enter the cup motion.
+   if(d<hole.r*.88 && now<=captureSpeed){
+     if(d<ball.r*.18&&now<1.30)finish();
+     else enterCup(d,now);
+   }
+   inHoleZone=true;
+ }else if(!touching){
+   inHoleZone=false;
+ }
+}
+function draw(){
+ ctx.clearRect(0,0,W,H);
+ let left=Math.max(26,W*.13),right=W-left;
+ ctx.fillStyle='#48a85c';ctx.beginPath();ctx.roundRect(left,55,right-left,H-80,30);ctx.fill();
+ ctx.fillStyle='rgba(255,255,255,.035)';ctx.fillRect(W*.38,55,W*.24,H-80);
+ ctx.fillStyle='#101010';ctx.beginPath();ctx.arc(hole.x,hole.y,hole.r,0,Math.PI*2);ctx.fill();
+ ctx.strokeStyle='rgba(255,255,255,.35)';ctx.lineWidth=2;ctx.stroke();
+ ctx.strokeStyle='#eee';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(hole.x,hole.y);ctx.lineTo(hole.x,hole.y-75);ctx.stroke();
+ ctx.fillStyle='#f3f3f3';ctx.beginPath();ctx.moveTo(hole.x,hole.y-75);ctx.lineTo(hole.x+35,hole.y-64);ctx.lineTo(hole.x,hole.y-52);ctx.closePath();ctx.fill();
+ if(dragging){
+   let dx=sx-px,dy=sy-py,d=Math.hypot(dx,dy);if(d>maxDrag){dx*=maxDrag/d;dy*=maxDrag/d}
+   ctx.setLineDash([7,7]);ctx.strokeStyle='rgba(255,255,255,.8)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(ball.x,ball.y);ctx.lineTo(ball.x+dx*1.45,ball.y+dy*1.45);ctx.stroke();ctx.setLineDash([]);
+   ctx.strokeStyle='rgba(255,255,255,.55)';ctx.beginPath();ctx.moveTo(ball.x,ball.y);ctx.lineTo(px,py);ctx.stroke();
+ }
+ ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#bbb';ctx.lineWidth=1;ctx.stroke();
+ ctx.fillStyle='rgba(255,255,255,.75)';ctx.font='12px -apple-system,sans-serif';ctx.textAlign='center';ctx.fillText('擦洞会减速 · 偏心会涮锅',hole.x,hole.y+hole.r+22);
+}
+function loop(){physics();draw();requestAnimationFrame(loop)}
+if(!ctx.roundRect){ctx.roundRect=function(x,y,w,h,r){this.rect(x,y,w,h)}}
+addEventListener('resize',resize);resize();loop();
+})();
+</script>
+</body></html>
