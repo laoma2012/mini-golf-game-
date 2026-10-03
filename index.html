@@ -68,7 +68,7 @@ function up(e){
  const rawD=d;
  if(d>MAX_PULL){dx*=MAX_PULL/d;dy*=MAX_PULL/d;d=MAX_PULL}
  const aimX=dx/(Math.hypot(dx,dy)||1);
- fullStraightShot=(rawD>=MAX_PULL*.94 && Math.abs(aimX)<.055);
+ fullStraightShot=(rawD>=MAX_PULL*.90 && Math.abs(aimX)<.085);
  crossedCupFast=false;topWallAfterFast=false;
  ball.vx=dx*POWER;ball.vy=dy*POWER;strokes++;N.textContent=strokes;e.preventDefault()
 }
@@ -99,7 +99,9 @@ function startOrbit(rx,ry,s,cross,entry){
  const d=Math.hypot(rx,ry)||1;
  cupMode='orbit';
  orbitAngle=Math.atan2(ry,rx);
- orbitRadius=Math.max(hole.r-ball.r*.18, Math.min(d,hole.r+ball.r*.15));
+ // Physical rim geometry: the BALL'S OUTER EDGE rides the CUP'S INNER EDGE.
+ // Therefore the ball center must stay inside at radius <= cup radius - ball radius.
+ orbitRadius=Math.max(ball.r*.18, hole.r-ball.r);
  orbitDir=Math.sign(cross)||1;
  // Visible angular travel. Faster entry = faster orbit.
  orbitOmega=orbitDir*Math.max(.035,Math.min(.105,s/Math.max(1,orbitRadius)*1.35));
@@ -121,7 +123,7 @@ function orbitPhysics(){
 
  // Low/moderate energy spirals inward. High-energy lip-out contracts much less.
  const shrink=orbitExit ? .010 : (.028 + Math.max(0,.055-absO)*.20);
- orbitRadius-=shrink;
+ orbitRadius=Math.max(ball.r*.12,orbitRadius-shrink);
 
  ball.x=hole.x+Math.cos(orbitAngle)*orbitRadius;
  ball.y=hole.y+Math.sin(orbitAngle)*orbitRadius;
@@ -249,6 +251,15 @@ function physics(){
    if(orbitPhysics())return;
  }else if(speed()>0){
    ball.x+=ball.vx;ball.y+=ball.vy;
+   // On the protected full-power rebound, stop above the cup before any cup interaction.
+   if(topWallAfterFast && ball.vy>0){
+     const safeY=hole.y-hole.r-ball.r*2.8;
+     if(ball.y>=safeY){
+       ball.y=safeY;ball.vx=0;ball.vy=0;cupMode='free';
+       fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;
+       return;
+     }
+   }
    if(cupPhysics())return;
    ball.vx*=FRICTION;ball.vy*=FRICTION;
    if(Math.abs(ball.vx)<STOP)ball.vx=0;if(Math.abs(ball.vy)<STOP)ball.vy=0;
@@ -263,18 +274,25 @@ function physics(){
  ball.y=T+ball.r;
  if(fullStraightShot && crossedCupFast){
    topWallAfterFast=true;
-   // Tuned first-hole protection: return stroke dies above the cup.
-   ball.vy=Math.abs(ball.vy)*.31;
-   ball.vx*=.45;
+   // First-hole full-power protection: visible rebound, with heavy energy loss.
+   ball.vy=Math.abs(ball.vy)*.24;
+   ball.vx*=.35;
  }else{
    ball.vy=Math.abs(ball.vy)*.78;
  }
 }
  if(ball.y+ball.r>B){ball.y=B-ball.r;ball.vy=-Math.abs(ball.vy)*.78}
- if(topWallAfterFast && ball.vy>0 && ball.y>=hole.y-hole.r-ball.r*2.2){
-   ball.y=hole.y-hole.r-ball.r*2.2;
-   ball.vx=0;ball.vy=0;
-   fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;
+ // IMPORTANT: this check happens BEFORE cupPhysics.
+ // A maximum-power straight shot must never be captured on the rebound.
+ if(topWallAfterFast && ball.vy>0){
+   const safeY=hole.y-hole.r-ball.r*2.8;
+   if(ball.y>=safeY){
+     ball.y=safeY;
+     ball.vx=0;ball.vy=0;
+     cupMode='free';
+     fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;
+     return;
+   }
  }
  if(cupMode!=='orbit')cupPhysics();
 }
