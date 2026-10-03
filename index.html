@@ -23,6 +23,7 @@ const c=document.getElementById('c'),g=c.getContext('2d'),N=document.getElementB
 let W,H,D=1,strokes=0,won=false,drag=false,px=0,py=0;
 let showFlag=true,fullStraightShot=false,crossedCupFast=false,topWallAfterFast=false;
 let cupMode='free', cupTurn=1, cupEntrySpeed=0;
+let orbitAngle=0,orbitRadius=0,orbitOmega=0,orbitDir=1,orbitFrames=0,orbitExit=false;
 let ball={x:0,y:0,r:10,vx:0,vy:0},hole={x:0,y:0,r:25.3};
 const MAX_PULL=175, POWER=.092, FRICTION=.987, STOP=.025;
 const CUP_ENTRY_DRAG=.982;            // shallow contact: modest loss
@@ -49,7 +50,8 @@ function reset(full=true){
  ball.x=W/2;
  ball.y=H-BOTTOM_SAFE-1.5*ball.r;
  ball.vx=ball.vy=0;drag=false;won=false;
- showFlag=true;fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;cupMode='free';cupEntrySpeed=0;
+ showFlag=true;fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;
+ cupMode='free';cupEntrySpeed=0;orbitAngle=0;orbitRadius=0;orbitOmega=0;orbitFrames=0;orbitExit=false;
  M.textContent='';
  if(full){strokes=0;N.textContent='0'}
 }
@@ -92,103 +94,160 @@ function sink(){
  }
  M.innerHTML=result;
 }
+
+function startOrbit(rx,ry,s,cross,entry){
+ const d=Math.hypot(rx,ry)||1;
+ cupMode='orbit';
+ orbitAngle=Math.atan2(ry,rx);
+ orbitRadius=Math.max(hole.r-ball.r*.18, Math.min(d,hole.r+ball.r*.15));
+ orbitDir=Math.sign(cross)||1;
+ // Visible angular travel. Faster entry = faster orbit.
+ orbitOmega=orbitDir*Math.max(.035,Math.min(.105,s/Math.max(1,orbitRadius)*1.35));
+ orbitFrames=0;
+ // High-energy offset entries are allowed to ride the lip and escape.
+ orbitExit=(s>5.15 && entry<.72);
+ ball.vx=ball.vy=0;
+}
+function orbitPhysics(){
+ if(cupMode!=='orbit')return false;
+ orbitFrames++;
+
+ // Move continuously around the cup. Radius contracts only gradually.
+ orbitAngle+=orbitOmega;
+
+ const absO=Math.abs(orbitOmega);
+ const energyLoss=orbitExit ? .985 : .972;
+ orbitOmega*=energyLoss;
+
+ // Low/moderate energy spirals inward. High-energy lip-out contracts much less.
+ const shrink=orbitExit ? .010 : (.028 + Math.max(0,.055-absO)*.20);
+ orbitRadius-=shrink;
+
+ ball.x=hole.x+Math.cos(orbitAngle)*orbitRadius;
+ ball.y=hole.y+Math.sin(orbitAngle)*orbitRadius;
+
+ // High-energy lip-out: after a visible arc, leave tangentially.
+ const travelled=orbitFrames*Math.abs(orbitOmega);
+ if(orbitExit && orbitFrames>14 && travelled>.95){
+   const tx=orbitDir*(-Math.sin(orbitAngle));
+   const ty=orbitDir*( Math.cos(orbitAngle));
+   const exitSpeed=Math.max(1.8,Math.min(4.2,Math.abs(orbitOmega)*orbitRadius*.78));
+   ball.vx=tx*exitSpeed;
+   ball.vy=ty*exitSpeed;
+   cupMode='free';
+   orbitExit=false;
+   return false;
+ }
+
+ // Normal swirl-in: require a visible orbit before the final drop.
+ // This removes the V13 "snap to center" appearance.
+ if(!orbitExit && orbitFrames>18 &&
+    (orbitRadius<=hole.r*.28 || Math.abs(orbitOmega)<.018)){
+   sink();
+   cupMode='free';
+   return true;
+ }
+ return false;
+}
 function cupPhysics(){
+ if(cupMode==='orbit')return orbitPhysics();
+
  const rx=ball.x-hole.x, ry=ball.y-hole.y;
  const d=Math.hypot(rx,ry);
  const s=speed();
-
- // Physical overlap begins when the BALL EDGE reaches the CUP EDGE.
- // This is the key correction: the ball center does NOT have to enter the cup.
  const contact=hole.r+ball.r;
  const overlap=contact-d;
+
  if(overlap<=0){
-   if(cupMode==='rim' && d>contact+ball.r*.25) cupMode='free';
+   if(cupMode==='rim' && d>contact+ball.r*.25)cupMode='free';
    return false;
  }
  if(s<.001)return false;
 
- // How much of the ball diameter has crossed the cup edge:
- // 0 = first touch, 1 = roughly the full ball diameter has entered.
  const entry=Math.max(0,Math.min(1,overlap/(2*ball.r)));
-
  const cross=rx*ball.vy-ry*ball.vx;
  const lineOffset=Math.abs(cross)/Math.max(s,.001);
- const central=lineOffset<ball.r*.34;
+ const central=lineOffset<ball.r*.30;
 
- // Full-power central shot: overspeed can cross the cup, but loses energy smoothly.
+ // Preserve the accepted V13 overspeed rule.
  if(fullStraightShot && central && s>5.6 && !topWallAfterFast){
    crossedCupFast=true;
    const loss=.991-.020*entry;
-   ball.vx*=loss; ball.vy*=loss;
+   ball.vx*=loss;ball.vy*=loss;
    return false;
  }
  if(central && s>8.0){
    const loss=.993-.016*entry;
-   ball.vx*=loss; ball.vy*=loss;
+   ball.vx*=loss;ball.vy*=loss;
    return false;
  }
 
  if(cupMode!=='rim'){
-   cupMode='rim';
-   cupEntrySpeed=s;
-   cupTurn=Math.sign(cross);
+   cupMode='rim';cupEntrySpeed=s;cupTurn=Math.sign(cross);
  }
 
- const ux=rx/(d||1), uy=ry/(d||1);       // cup center -> ball
- const inwardX=-ux, inwardY=-uy;
+ const ux=rx/(d||1),uy=ry/(d||1);
+ const inwardX=-ux,inwardY=-uy;
 
- // A very slow ball with substantial body over the opening MUST fall.
- // It does not need center-to-center alignment.
- if(entry>=.58 && s<=3.25){
-   sink(); return true;
+ // Near-perfect center line may fall almost directly; no fake swirl is added.
+ // But it must be genuinely centered.
+ if(central && entry>=.60 && s<=3.0){
+   sink();return true;
  }
- // Hard safety corresponding to the agreed ~75% body-entry rule.
+
+ // Key V14 change:
+ // offset low/moderate-speed balls that V13 would instantly capture now enter
+ // an explicit visible orbit around the inner lip.
+ const offsetEnough=lineOffset>=ball.r*.30;
+ if(offsetEnough && entry>=.42 && s<=5.45){
+   startOrbit(rx,ry,s,cross,entry);
+   return orbitPhysics();
+ }
+
+ // 75% body-entry safety remains, but offset entries swirl before sinking.
  if(entry>=.75 && s<=5.25){
-   sink(); return true;
+   if(offsetEnough){
+     startOrbit(rx,ry,s,cross,entry);
+     return orbitPhysics();
+   }
+   sink();return true;
  }
 
- // Perfectly centered moderate/slow entry: continue into the empty cup, no sideways kick.
- if(Math.abs(cross)<.001){
-   const drag=.993-.026*entry;
-   ball.vx*=drag; ball.vy*=drag;
-   if(entry>.48 && speed()<4.35){sink();return true}
-   return false;
- }
-
- // Off-center ball follows the INNER LIP. Preserve its incoming angular momentum.
+ // Continuous approach to the inner lip before orbit state begins.
  const turn=Math.sign(cross)||1;
- const tx=turn*(-uy), ty=turn*ux;
- const v=speed();
-
- // Continuous curvature starts gently at first overlap and grows with unsupported area.
- const bend=.012+.075*entry;
+ const tx=turn*(-uy),ty=turn*ux;
+ const v=s;
+ const bend=.010+.060*entry;
  let vx=ball.vx*(1-bend)+(tx*v)*bend;
  let vy=ball.vy*(1-bend)+(ty*v)*bend;
 
- // Loss of ground support creates an inward/downward component.
- // Stronger than V12 at low speed so a slowly rolling ball cannot skate across the hole.
  const slowFactor=Math.max(0,1-Math.min(v,6)/6);
- const fall=.010+.045*entry+.030*slowFactor*entry;
- vx+=inwardX*fall;
- vy+=inwardY*fall;
+ const fall=.008+.034*entry+.020*slowFactor*entry;
+ vx+=inwardX*fall;vy+=inwardY*fall;
 
- // Noticeable but progressive cup energy loss.
- const drag=.995-.026*entry-(.010*slowFactor*entry);
- ball.vx=vx*drag;
- ball.vy=vy*drag;
+ const drag=.996-.020*entry-(.007*slowFactor*entry);
+ ball.vx=vx*drag;ball.vy=vy*drag;
 
+ // If a slow offset ball becomes deeply unsupported, transition to orbit, not sink().
  const v2=speed();
-
- // Deep low/moderate-speed overlap is captured regardless of exact center alignment.
- if(entry>=.50 && v2<=2.65){sink();return true}
- if(entry>=.68 && v2<=4.25){sink();return true}
- if(v2<.14 && entry>.32){sink();return true}
-
+ if(offsetEnough && entry>=.52 && v2<=3.35){
+   startOrbit(rx,ry,v2,cross,entry);
+   return orbitPhysics();
+ }
+ if(!offsetEnough && entry>=.68 && v2<=4.0){
+   sink();return true;
+ }
+ if(v2<.12 && entry>.34){
+   if(offsetEnough){startOrbit(rx,ry,v2,cross,entry);return orbitPhysics();}
+   sink();return true;
+ }
  return false;
 }
 function physics(){
  if(won)return;
- if(speed()>0){
+ if(cupMode==='orbit'){
+   if(orbitPhysics())return;
+ }else if(speed()>0){
    ball.x+=ball.vx;ball.y+=ball.vy;
    if(cupPhysics())return;
    ball.vx*=FRICTION;ball.vy*=FRICTION;
@@ -217,7 +276,7 @@ function physics(){
    ball.vx=0;ball.vy=0;
    fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;
  }
- cupPhysics();
+ if(cupMode!=='orbit')cupPhysics();
 }
 function draw(){
  g.clearRect(0,0,W,H);g.fillStyle='#078d43';g.fillRect(0,0,W,H);
