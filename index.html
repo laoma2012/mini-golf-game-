@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第一关 v7</title>
+<title>迷你高尔夫 第一关 v8</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#123b22;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;touch-action:none}
 canvas{display:block;width:100vw;height:100dvh;touch-action:none}
@@ -38,11 +38,11 @@ const TOP_SAFE=72;
 function rr(x,y,w,h,r){g.beginPath();g.moveTo(x+r,y);g.lineTo(x+w-r,y);g.quadraticCurveTo(x+w,y,x+w,y+r);g.lineTo(x+w,y+h-r);g.quadraticCurveTo(x+w,y+h,x+w-r,y+h);g.lineTo(x+r,y+h);g.quadraticCurveTo(x,y+h,x,y+h-r);g.lineTo(x,y+r);g.quadraticCurveTo(x,y,x+r,y);g.closePath()}
 function speed(){return Math.hypot(ball.vx,ball.vy)}
 function reset(full=true){
- ball.r=Math.max(9,Math.min(12,W*.024)); hole.r=ball.r*2.53;
+ ball.r=Math.max(9,Math.min(12,W*.024)); hole.r=ball.r*2.53; // fixed standard: cup diameter ≈ 2.53 × ball diameter
  hole.x=W/2;
  // fixed design rule: cup center about 3 cup diameters below playable top edge
  const playableTop=TOP_SAFE;
- hole.y=playableTop + 7*hole.r;
+ hole.y=playableTop + 6*hole.r; // hole center = 3 cup diameters below lane top
  // ball is deliberately lifted above Safari toolbar / gesture zone
  ball.x=W/2;
  ball.y=H-BOTTOM_SAFE-1.5*ball.r;
@@ -159,7 +159,10 @@ function physics(){
    ball.vx*=FRICTION;ball.vy*=FRICTION;
    if(Math.abs(ball.vx)<STOP)ball.vx=0;if(Math.abs(ball.vy)<STOP)ball.vy=0;
  }
- const L=Math.max(28,W*.14),R=W-L,T=TOP_SAFE,B=H-10;
+ const T=TOP_SAFE,B=H-10;
+ const laneH=B-T;
+ const laneW=Math.min(W*.82,laneH/2.51);
+ const L=(W-laneW)/2,R=(W+laneW)/2;
  if(ball.x-ball.r<L){ball.x=L+ball.r;ball.vx=Math.abs(ball.vx)*.78}
  if(ball.x+ball.r>R){ball.x=R-ball.r;ball.vx=-Math.abs(ball.vx)*.78}
  if(ball.y-ball.r<T){ball.y=T+ball.r;ball.vy=Math.abs(ball.vy)*.78}
@@ -168,7 +171,10 @@ function physics(){
 }
 function draw(){
  g.clearRect(0,0,W,H);g.fillStyle='#078d43';g.fillRect(0,0,W,H);
- const L=Math.max(28,W*.14),B=H-10;
+ const B=H-10;
+ const laneH=B-TOP_SAFE;
+ const laneW=Math.min(W*.82,laneH/2.51);
+ const L=(W-laneW)/2;
  g.fillStyle='#42ae61';rr(L,TOP_SAFE,W-2*L,B-TOP_SAFE,18);g.fill();
  g.fillStyle='rgba(255,255,255,.025)';g.fillRect(W*.37,TOP_SAFE,W*.26,B-TOP_SAFE);
  // cup
