@@ -23,6 +23,7 @@ const c=document.getElementById('c'),g=c.getContext('2d'),N=document.getElementB
 let W,H,D=1,strokes=0,won=false,drag=false,px=0,py=0;
 let showFlag=true,fullStraightShot=false,crossedCupFast=false,topWallAfterFast=false;
 let cupMode='free', cupTurn=1, cupEntrySpeed=0;
+let cupEscapeLock=false, cupWasInside=false;
 let ball={x:0,y:0,r:10,vx:0,vy:0,z:0,vz:0,alpha:1,scale:1},hole={x:0,y:0,r:25.3};
 let AC=null,master=null,rollSrc=null,rollGain=null,rollFilter=null,lastRimSound=0;
 const MAX_PULL=175, POWER=.092, FRICTION=.987, STOP=.025;
@@ -63,7 +64,7 @@ function reset(full=true){
  ball.y=H-BOTTOM_SAFE-1.5*ball.r;
  ball.vx=ball.vy=0;drag=false;won=false;
  showFlag=true;fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;
- cupMode='free';cupEntrySpeed=0;ball.z=0;ball.vz=0;ball.alpha=1;ball.scale=1;
+ cupMode='free';cupEntrySpeed=0;cupEscapeLock=false;cupWasInside=false;ball.z=0;ball.vz=0;ball.alpha=1;ball.scale=1;
  M.textContent='';
  if(full){strokes=0;N.textContent='0'}
 }
@@ -133,7 +134,15 @@ function cupPhysics(){
   const s=speed();
   const contact=hole.r+ball.r;
   const overlap=contact-d;
-  if(overlap<=0){cupMode='free';return false}
+
+  // V20.3: once a fast lip-out has genuinely escaped the cup, do not let the
+  // same contact episode pull it back in. Re-arm only after the ball is clearly
+  // outside the cup interaction zone; a later real return is then a new entry.
+  if(cupEscapeLock){
+    if(d>contact+ball.r*.35){cupEscapeLock=false;cupWasInside=false;cupMode='free'}
+    else return false;
+  }
+  if(overlap<=0){cupMode='free';cupWasInside=false;return false}
   if(s<.001)return false;
 
   const entry=Math.max(0,Math.min(1,overlap/(2*ball.r)));
@@ -142,6 +151,7 @@ function cupPhysics(){
   const tangential=-ball.vx*uy+ball.vy*ux;
   const lineOffset=Math.abs(rx*ball.vy-ry*ball.vx)/Math.max(s,.001);
   const central=lineOffset<ball.r*.27;
+  if(entry>.28)cupWasInside=true;
   if(entry>.14 && (Math.abs(radial)>.16 || Math.abs(tangential)>.45))sfxRim(s);
 
   // Keep the deliberately protected first-hole full-power straight shot.
@@ -173,6 +183,17 @@ function cupPhysics(){
   ball.vy=nr*uy+nt*ux;
 
   const v2=speed();
+
+  // High-energy eccentric escape: if the ball has already penetrated the cup,
+  // is now moving outward and still carries substantial speed, this is a lip-out.
+  // End cup influence immediately instead of allowing a later capture threshold
+  // to reverse the visible escape seen in the user's test video.
+  const outwardNow=(ball.vx*ux+ball.vy*uy);
+  if(cupWasInside && entry<.56 && outwardNow>.22 && v2>4.15){
+    cupEscapeLock=true;cupMode='free';
+    return false;
+  }
+
   const offsetRatio=Math.min(1,lineOffset/(hole.r||1));
 
   // Capture is continuous: deeper support loss permits faster capture; eccentric
