@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>煤球迷你高尔夫 · 第一关原型</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#16231b;font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;touch-action:none}
+#wrap{height:100%;display:grid;place-items:center}
+canvas{background:#244b31;max-width:100vw;max-height:100vh;box-shadow:0 0 40px #0008}
+#hud{position:fixed;top:12px;left:50%;transform:translateX(-50%);color:white;text-align:center;pointer-events:none;text-shadow:0 2px 4px #000}
+#title{font-weight:700;font-size:18px}.small{font-size:13px;opacity:.9}
+#msg{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);color:white;font-size:34px;font-weight:800;text-align:center;text-shadow:0 3px 8px #000;pointer-events:none}
+button{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);padding:10px 18px;border:0;border-radius:18px;font-size:15px;display:none}
+</style>
+</head><body>
+<div id="wrap"><canvas id="c" width="420" height="780"></canvas></div>
+<div id="hud"><div id="title">第 1 关 · PAR 2</div><div class="small" id="stroke">第 0 杆</div><div class="small">按住白球向后拖，松手击球</div></div>
+<div id="msg"></div><button id="again">再来一次</button>
+<script>
+const c=document.getElementById('c'),x=c.getContext('2d'),msg=document.getElementById('msg'),
+strokeEl=document.getElementById('stroke'),again=document.getElementById('again');
+let ball,hole,drag=false,start=null,pull=null,strokes=0,won=false,last=performance.now();
+const R=10, friction=.985, maxPull=150, maxSpeed=10;
+function reset(){
+ ball={x:210,y:675,vx:0,vy:0}; hole={x:210,y:105,r:14}; drag=false; strokes=0; won=false;
+ msg.textContent=''; again.style.display='none'; strokeEl.textContent='第 0 杆';
+}
+function pos(e){let r=c.getBoundingClientRect(),t=e.touches?e.touches[0]:e;return{x:(t.clientX-r.left)*c.width/r.width,y:(t.clientY-r.top)*c.height/r.height}}
+function down(e){if(won||Math.hypot(ball.vx,ball.vy)>.08)return;let p=pos(e);if(Math.hypot(p.x-ball.x,p.y-ball.y)<38){drag=true;start={x:ball.x,y:ball.y};pull=p;e.preventDefault()}}
+function move(e){if(!drag)return;pull=pos(e);e.preventDefault()}
+function up(e){if(!drag)return;drag=false;let dx=start.x-pull.x,dy=start.y-pull.y,d=Math.hypot(dx,dy);if(d<8)return;let power=Math.min(d,maxPull)/maxPull;ball.vx=dx/d*maxSpeed*power;ball.vy=dy/d*maxSpeed*power;strokes++;strokeEl.textContent=`第 ${strokes} 杆`;e.preventDefault()}
+c.addEventListener('mousedown',down);c.addEventListener('mousemove',move);c.addEventListener('mouseup',up);c.addEventListener('mouseleave',up);
+c.addEventListener('touchstart',down,{passive:false});c.addEventListener('touchmove',move,{passive:false});
+c.addEventListener('touchend',function(e){if(!drag)return;drag=false;let dx=start.x-pull.x,dy=start.y-pull.y,d=Math.hypot(dx,dy);if(d<8)return;let power=Math.min(d,maxPull)/maxPull;ball.vx=dx/d*maxSpeed*power;ball.vy=dy/d*maxSpeed*power;strokes++;strokeEl.textContent='第 '+strokes+' 杆';e.preventDefault();},{passive:false});
+function physics(){
+ if(won)return;
+ ball.x+=ball.vx;ball.y+=ball.vy;ball.vx*=friction;ball.vy*=friction;
+ if(Math.abs(ball.vx)<.02)ball.vx=0;if(Math.abs(ball.vy)<.02)ball.vy=0;
+ const L=76,Rt=344,T=54,B=726;
+ if(ball.x<L+R){ball.x=L+R;ball.vx=Math.abs(ball.vx)*.72}
+ if(ball.x>Rt-R){ball.x=Rt-R;ball.vx=-Math.abs(ball.vx)*.72}
+ if(ball.y<T+R){ball.y=T+R;ball.vy=Math.abs(ball.vy)*.72}
+ if(ball.y>B-R){ball.y=B-R;ball.vy=-Math.abs(ball.vy)*.72}
+ let d=Math.hypot(ball.x-hole.x,ball.y-hole.y),s=Math.hypot(ball.vx,ball.vy);
+ if(d<hole.r+3 && s<4.2){ball.x=hole.x;ball.y=hole.y;ball.vx=ball.vy=0;won=true;
+   msg.innerHTML=strokes===1?'EAGLE!<br><span style="font-size:18px">一杆进洞 · 额外奖励</span>':strokes===2?'PAR!<br><span style="font-size:18px">两杆完成</span>':`完成！<br><span style="font-size:18px">${strokes} 杆</span>`;
+   again.style.display='block';
+ }
+}
+function draw(){
+ x.clearRect(0,0,c.width,c.height);
+ // surround
+ x.fillStyle='#193824';x.fillRect(0,0,c.width,c.height);
+ // long straight fairway/green
+ x.fillStyle='#58a85e'; roundRect(76,54,268,672,40);x.fill();
+ // subtle center guide
+ x.setLineDash([7,12]);x.strokeStyle='#ffffff25';x.lineWidth=2;x.beginPath();x.moveTo(210,650);x.lineTo(210,125);x.stroke();x.setLineDash([]);
+ // cup and flag
+ x.fillStyle='#162016';x.beginPath();x.arc(hole.x,hole.y,hole.r,0,Math.PI*2);x.fill();
+ x.strokeStyle='#eee';x.lineWidth=3;x.beginPath();x.moveTo(hole.x,hole.y);x.lineTo(hole.x,55);x.stroke();
+ x.fillStyle='#f1f1f1';x.beginPath();x.moveTo(hole.x,56);x.lineTo(hole.x+32,67);x.lineTo(hole.x,77);x.closePath();x.fill();
+ // drag aim
+ if(drag){
+   let dx=start.x-pull.x,dy=start.y-pull.y,d=Math.hypot(dx,dy),scale=Math.min(d,maxPull)/(d||1);
+   x.strokeStyle='#fff';x.lineWidth=4;x.beginPath();x.moveTo(ball.x,ball.y);x.lineTo(ball.x+dx*scale*1.4,ball.y+dy*scale*1.4);x.stroke();
+   x.strokeStyle='#ffd66b';x.lineWidth=6;x.beginPath();x.moveTo(ball.x,ball.y);x.lineTo(pull.x,pull.y);x.stroke();
+ }
+ // ball
+ x.shadowColor='#0008';x.shadowBlur=7;x.fillStyle='white';x.beginPath();x.arc(ball.x,ball.y,R,0,Math.PI*2);x.fill();x.shadowBlur=0;
+ // start label
+ x.fillStyle='#ffffffcc';x.font='13px system-ui';x.textAlign='center';x.fillText('起点',210,712);
+}
+function roundRect(a,b,w,h,r){
+ r=Math.min(r,w/2,h/2);x.beginPath();x.moveTo(a+r,b);x.lineTo(a+w-r,b);
+ x.quadraticCurveTo(a+w,b,a+w,b+r);x.lineTo(a+w,b+h-r);
+ x.quadraticCurveTo(a+w,b+h,a+w-r,b+h);x.lineTo(a+r,b+h);
+ x.quadraticCurveTo(a,b+h,a,b+h-r);x.lineTo(a,b+r);
+ x.quadraticCurveTo(a,b,a+r,b);x.closePath();
+}
+function loop(){physics();draw();requestAnimationFrame(loop)}reset();loop();
+again.onclick=reset;
+</script></body></html>
