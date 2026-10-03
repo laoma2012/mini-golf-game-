@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第一关 V20 · Sound</title>
+<title>迷你高尔夫 第一关 V20.2 · Golf Sound</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#123b22;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;touch-action:none}
 canvas{display:block;width:100vw;height:100dvh;touch-action:none}
@@ -42,15 +42,15 @@ function rr(x,y,w,h,r){g.beginPath();g.moveTo(x+r,y);g.lineTo(x+w-r,y);g.quadrat
 function audioInit(){
  if(AC)return; AC=new (window.AudioContext||window.webkitAudioContext)(); master=AC.createGain();master.gain.value=.72;master.connect(AC.destination);
  const n=AC.sampleRate*2,b=AC.createBuffer(1,n,AC.sampleRate),a=b.getChannelData(0);for(let i=0;i<n;i++)a[i]=Math.random()*2-1;
- rollSrc=AC.createBufferSource();rollSrc.buffer=b;rollSrc.loop=true;rollFilter=AC.createBiquadFilter();rollFilter.type='bandpass';rollFilter.frequency.value=950;rollFilter.Q.value=.55;rollGain=AC.createGain();rollGain.gain.value=0;rollSrc.connect(rollFilter).connect(rollGain).connect(master);rollSrc.start();
+ rollSrc=AC.createBufferSource();rollSrc.buffer=b;rollSrc.loop=true;rollFilter=AC.createBiquadFilter();rollFilter.type='lowpass';rollFilter.frequency.value=520;rollFilter.Q.value=.35;rollGain=AC.createGain();rollGain.gain.value=0;rollSrc.connect(rollFilter).connect(rollGain).connect(master);rollSrc.start();
 }
 function tone(freq,dur,vol=.1,type='sine',endFreq=null){if(!AC)return;const t=AC.currentTime,o=AC.createOscillator(),gn=AC.createGain();o.type=type;o.frequency.setValueAtTime(freq,t);if(endFreq)o.frequency.exponentialRampToValueAtTime(endFreq,t+dur);gn.gain.setValueAtTime(Math.max(.0001,vol),t);gn.gain.exponentialRampToValueAtTime(.0001,t+dur);o.connect(gn).connect(master);o.start(t);o.stop(t+dur+.02)}
 function noiseHit(dur=.04,vol=.08,freq=1600){if(!AC)return;const n=Math.max(1,Math.floor(AC.sampleRate*dur)),b=AC.createBuffer(1,n,AC.sampleRate),a=b.getChannelData(0);for(let i=0;i<n;i++)a[i]=(Math.random()*2-1)*Math.pow(1-i/n,2);const src=AC.createBufferSource(),f=AC.createBiquadFilter(),gn=AC.createGain();src.buffer=b;f.type='bandpass';f.frequency.value=freq;f.Q.value=.8;gn.gain.value=vol;src.connect(f).connect(gn).connect(master);src.start()}
-function sfxStrike(v){audioInit();tone(620,.028,.055+.045*Math.min(1,v/10),'triangle',410);noiseHit(.018,.025,2400)}
+function sfxStrike(v){audioInit();const q=Math.min(1,v/16);/* putter face -> golf ball: compact click, louder/brighter with pull */tone(1180+420*q,.014,.040+.095*q,'triangle',760+180*q);tone(330+80*q,.022,.018+.035*q,'sine',250);noiseHit(.009,.010+.025*q,2800+900*q)}
 function sfxWall(v){audioInit();const q=Math.min(1,v/10);tone(390+220*q,.045+.018*q,.07+.11*q,'triangle',250+120*q);noiseHit(.028,.035+.05*q,1800+700*q)}
-function sfxRim(v){audioInit();const now=performance.now();if(now-lastRimSound<65)return;lastRimSound=now;const q=Math.min(1,v/7);tone(1050+350*q,.022,.035+.05*q,'triangle',720);noiseHit(.016,.018+.025*q,3200)}
-function sfxCup(v){audioInit();const q=Math.min(1,v/6);tone(720+120*q,.035,.09+.04*q,'triangle',430);setTimeout(()=>tone(185,.13,.10+.04*q,'sine',105),22);setTimeout(()=>noiseHit(.07,.05+.025*q,620),28)}
-function updateRoll(){if(!AC||!rollGain)return;const s=speed(),active=!won&&cupMode!=='drop'&&s>.12;const target=active?Math.min(.055,.006+s*.0042):0;rollGain.gain.setTargetAtTime(target,AC.currentTime,.035);rollFilter.frequency.setTargetAtTime(650+Math.min(1100,s*80),AC.currentTime,.05)}
+function sfxRim(v){audioInit();const now=performance.now();const q=Math.min(1,v/7);const gap=105-45*q;if(now-lastRimSound<gap)return;lastRimSound=now;/* repeated light cup-lip ticks while the ball rides the rim */tone(1420+260*q,.013,.020+.032*q,'triangle',930);noiseHit(.008,.009+.014*q,3600)}
+function sfxCup(v){audioInit();const q=Math.min(1,v/6);/* recognizable golf cup sequence: lip/liner click -> drop -> short cup-bottom resonance */tone(1260+180*q,.015,.050+.030*q,'triangle',820);noiseHit(.010,.018+.010*q,3300);setTimeout(()=>{tone(410+55*q,.030,.060+.030*q,'triangle',255);noiseHit(.018,.020+.010*q,1050)},38);setTimeout(()=>tone(235,.075,.055+.025*q,'sine',145),58);setTimeout(()=>tone(520,.018,.020+.012*q,'triangle',330),82)}
+function updateRoll(){if(!AC||!rollGain)return;const s=speed(),active=!won&&cupMode!=='drop'&&s>.55;/* intentionally subtle: turf roll is ambience, not the main effect */const target=active?Math.min(.012,.0012+Math.max(0,s-.55)*.00085):0;rollGain.gain.setTargetAtTime(target,AC.currentTime,.055);rollFilter.frequency.setTargetAtTime(260+Math.min(420,s*28),AC.currentTime,.07)}
 function speed(){return Math.hypot(ball.vx,ball.vy)}
 function reset(full=true){
  ball.r=Math.max(9,Math.min(12,W*.024)); hole.r=ball.r*2.53; // fixed standard: cup diameter ≈ 2.53 × ball diameter
@@ -142,7 +142,7 @@ function cupPhysics(){
   const tangential=-ball.vx*uy+ball.vy*ux;
   const lineOffset=Math.abs(rx*ball.vy-ry*ball.vx)/Math.max(s,.001);
   const central=lineOffset<ball.r*.27;
-  if(entry>.18 && Math.abs(radial)>.22)sfxRim(s);
+  if(entry>.14 && (Math.abs(radial)>.16 || Math.abs(tangential)>.45))sfxRim(s);
 
   // Keep the deliberately protected first-hole full-power straight shot.
   if(fullStraightShot && central && s>5.4 && !topWallAfterFast){
