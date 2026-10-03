@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第一关 v4</title>
+<title>迷你高尔夫 第一关 v5</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#102818;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;touch-action:none}
 #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
@@ -46,63 +46,37 @@ function finish(){
 function enterCup(d,now){
  const rx=ball.x-hole.x, ry=ball.y-hole.y;
  const cross=rx*ball.vy-ry*ball.vx;
- const offset=d/hole.r;
- const maxOrbit=Math.max(1,hole.r-ball.r*.98); // ball outer edge stays inside cup
+ const maxOrbit=Math.max(1,hole.r-ball.r*.98);
  cup.active=true;
  cup.angle=Math.atan2(ry,rx);
- cup.radius=Math.min(maxOrbit,Math.max(ball.r*.18,d*.72));
+ cup.radius=Math.min(maxOrbit,Math.max(ball.r*.12,d*.72));
  cup.entrySpeed=now;
- cup.omega=(cross>=0?1:-1)*(.045+Math.min(.12,now*.045));
+ cup.omega=(cross>=0?1:-1)*(.045+Math.min(.11,now*.05));
  cup.turn=0;
- // Faster captured balls may travel farther, but never more than 1.5 turns.
- cup.maxTurn=Math.min(Math.PI*3, Math.PI*(.45+now*.72));
- cup.willSink=(offset<.72&&now<1.85)||(offset<.86&&now<1.20);
+ cup.maxTurn=Math.min(Math.PI*3,Math.PI*(.35+now*.65));
+ cup.willSink=true;               // below capture threshold + inside cup = always captured
  ball.vx=ball.vy=0;
-}
-function ejectCup(){
- const sign=Math.sign(cup.omega)||1;
- const tx=-Math.sin(cup.angle)*sign, ty=Math.cos(cup.angle)*sign;
- // Lip-out loses substantial energy.
- const exitSpeed=Math.max(.35,Math.min(1.15,cup.entrySpeed*.38));
- ball.vx=tx*exitSpeed; ball.vy=ty*exitSpeed;
- const exitR=Math.max(1,hole.r-ball.r*.98);
- ball.x=hole.x+Math.cos(cup.angle)*exitR;
- ball.y=hole.y+Math.sin(cup.angle)*exitR;
- cup.active=false; inHoleZone=true;
 }
 function cupPhysics(){
  cup.turn+=Math.abs(cup.omega);
- cup.omega*=.982; // continuous energy loss
- if(cup.willSink){
-   // Spiral inward: no fixed circular rail.
-   const progress=Math.min(1,cup.turn/Math.max(.1,cup.maxTurn));
-   cup.radius*=.982-(progress*.004);
-   cup.angle+=cup.omega;
-   ball.x=hole.x+Math.cos(cup.angle)*cup.radius;
-   ball.y=hole.y+Math.sin(cup.angle)*cup.radius;
-   // irreversible capture point
-   if(cup.radius<=ball.r*.18 || cup.turn>=cup.maxTurn){finish()}
- }else{
-   // Still supported by lip: can lip out, but only before irreversible capture.
-   cup.radius=Math.min(hole.r-ball.r*.98,cup.radius*1.002);
-   cup.angle+=cup.omega;
-   ball.x=hole.x+Math.cos(cup.angle)*cup.radius;
-   ball.y=hole.y+Math.sin(cup.angle)*cup.radius;
-   if(cup.turn>=Math.min(cup.maxTurn,Math.PI*1.65)) ejectCup();
- }
-}
-function applyCupResistance(d,now){
- // Any effective contact with the cup removes energy.
- const contact=Math.max(0,1-d/(hole.r+ball.r));
- if(contact<=0)return;
- const factor=Math.max(.48,.82-contact*.24);
- ball.vx*=factor; ball.vy*=factor;
+ cup.omega*=.98;
+ cup.radius*=.974;                // visible inward spiral
+ cup.angle+=cup.omega;
+ ball.x=hole.x+Math.cos(cup.angle)*cup.radius;
+ ball.y=hole.y+Math.sin(cup.angle)*cup.radius;
+ if(cup.radius<=ball.r*.14 || cup.turn>=cup.maxTurn) finish();
 }
 function physics(){
  if(won)return;
  if(cup.active){cupPhysics();return}
  let s=speed();
- if(s<=0)return;
+ if(s<=0){
+   // A stopped ball whose center is inside the effective cup cannot remain there.
+   let ds=Math.hypot(ball.x-hole.x,ball.y-hole.y);
+   if(ds<=hole.r-ball.r*.10) enterCup(ds,0);
+   return;
+ }
+ const prevX=ball.x, prevY=ball.y;
  ball.x+=ball.vx;ball.y+=ball.vy;
  ball.vx*=friction;ball.vy*=friction;
  if(Math.abs(ball.vx)<stop)ball.vx=0;if(Math.abs(ball.vy)<stop)ball.vy=0;
@@ -112,20 +86,36 @@ function physics(){
  if(ball.y-ball.r<70){ball.y=70+ball.r;ball.vy=Math.abs(ball.vy)*.78}
  if(ball.y+ball.r>H-18){ball.y=H-18-ball.r;ball.vy=-Math.abs(ball.vy)*.78}
 
- let d=Math.hypot(ball.x-hole.x,ball.y-hole.y),now=speed();
- const touching=d<hole.r+ball.r*.82;
- if(touching && !inHoleZone){
-   applyCupResistance(d,now);
-   now=speed();
-   // Only genuinely capturable balls enter the cup motion.
-   if(d<hole.r*.88 && now<=captureSpeed){
-     if(d<ball.r*.18&&now<1.30)finish();
-     else enterCup(d,now);
+ let d=Math.hypot(ball.x-hole.x,ball.y-hole.y), now=speed();
+ const effectiveR=hole.r-ball.r*.10;
+ const contactR=hole.r+ball.r*.75;
+
+ // Rule 1: slow enough + center inside effective cup => guaranteed capture.
+ if(d<=effectiveR && now<=captureSpeed){
+   if(d<=ball.r*.22 && now<1.45) finish();
+   else enterCup(d,now);
+   inHoleZone=true;
+   return;
+ }
+
+ // Rule 2: any fast traversal/contact loses substantial energy but preserves forward direction.
+ if(d<contactR && !inHoleZone){
+   const vx0=ball.vx, vy0=ball.vy;
+   const pre=Math.hypot(vx0,vy0);
+   if(pre>0){
+     // Strong cup energy loss: exit at roughly 42–58% depending on depth of contact.
+     const depth=Math.max(0,Math.min(1,(contactR-d)/contactR));
+     const lossFactor=.58-depth*.16;
+     ball.vx=vx0*lossFactor;
+     ball.vy=vy0*lossFactor;
    }
    inHoleZone=true;
- }else if(!touching){
+ } else if(d>=contactR){
    inHoleZone=false;
  }
+
+ // Rule 3: if friction makes it stop inside cup after contact, capture it.
+ if(speed()<=stop && d<=effectiveR) enterCup(d,0);
 }
 function draw(){
  ctx.clearRect(0,0,W,H);
