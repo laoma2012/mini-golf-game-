@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第一关 v8</title>
+<title>迷你高尔夫 第一关 v9</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#123b22;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;touch-action:none}
 canvas{display:block;width:100vw;height:100dvh;touch-action:none}
@@ -15,7 +15,7 @@ canvas{display:block;width:100vw;height:100dvh;touch-action:none}
 </style></head>
 <body>
 <canvas id="c"></canvas>
-<div id="hud"><b>第一关 · PAR 2　杆数：<span id="n">0</span></b><div class="sub">按住白球向后拖，松手击球</div></div>
+<div id="hud"><b>第一关 · PAR 3　杆数：<span id="n">0</span></b><div class="sub">按住白球向后拖，松手击球</div></div>
 <div id="msg"></div><button id="reset">重新开始</button>
 <script>
 (()=>{
@@ -64,7 +64,14 @@ function up(e){
 }
 function sink(){
  if(won)return;won=true;ball.vx=ball.vy=0;ball.x=hole.x;ball.y=hole.y;
- M.innerHTML=strokes===1?'EAGLE!<br><span style="font-size:16px">一杆进洞 · 额外奖励</span>':strokes===2?'PAR':('完成 · '+strokes+' 杆');
+ let result='';
+ if(strokes===1) result='EAGLE!<br><span style="font-size:16px">一杆进洞 · 额外奖励</span>';
+ else if(strokes===2) result='BIRDIE!';
+ else if(strokes===3) result='PAR';
+ else if(strokes===4) result='BOGEY';
+ else if(strokes===5) result='DOUBLE BOGEY';
+ else result='DOUBLE PAR';
+ M.innerHTML=result+'<br><span style="font-size:15px">'+strokes+' 杆完成</span>';
 }
 
 /*
