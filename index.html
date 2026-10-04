@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第一关 V20.6 · Deep Cup Capture Fix</title>
+<title>迷你高尔夫 第一关 V21.0 · Cup State Fix</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#123b22;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;touch-action:none}
 canvas{display:block;width:100vw;height:100dvh;touch-action:none}
@@ -136,44 +136,49 @@ function cupPhysics(){
   const contact=hole.r+ball.r;
   const overlap=contact-d;
 
-  // V20.5: after any high-speed cup entry, capture is forbidden for the ENTIRE
-  // contact episode. It cannot become a drop merely because cup contact slows it.
-  // A new capture decision is allowed only after the ball has fully cleared the cup.
-  if(fastCupCooldown){
+  // V21.0: cooldown/escape locks protect a ball that has genuinely escaped.
+  // They must never leave a nearly-stationary ball suspended inside the cup.
+  if(fastCupCooldown || cupEscapeLock){
     if(d>contact+ball.r*2.05){
       fastCupCooldown=false;fastCupTransit=false;cupEscapeLock=false;
       cupWasInside=false;cupPeakEntry=0;cupEntryFalling=0;cupMode='free';
     }else{
+      const lockedEntry=Math.max(0,Math.min(1,overlap/(2*ball.r)));
+      if(overlap>0 && s<.20 && (lockedEntry>=.55 || d<=hole.r*.82)){
+        fastCupCooldown=false;fastCupTransit=false;cupEscapeLock=false;
+        beginDrop();return dropPhysics();
+      }
       cupMode='free';
       return false;
     }
   }
 
-  if(cupEscapeLock){
-    if(d>contact+ball.r*2.05){
-      cupEscapeLock=false;cupWasInside=false;cupPeakEntry=0;cupEntryFalling=0;cupMode='free';
-    }else{
-      cupMode='free';
-      return false;
-    }
-  }
   if(overlap<=0){
-    // A fast transit is not considered finished at the geometric edge. Keep a
-    // cooldown until the whole ball has clearly escaped the cup neighborhood.
-    if(fastCupTransit){fastCupTransit=false;fastCupCooldown=true;cupMode='free';return false}
-    cupMode='free';cupWasInside=false;cupPeakEntry=0;cupEntryFalling=0;return false
+    if(fastCupTransit){
+      fastCupTransit=false;fastCupCooldown=true;cupMode='free';return false;
+    }
+    cupMode='free';cupWasInside=false;cupPeakEntry=0;cupEntryFalling=0;return false;
   }
-  if(s<.001)return false;
 
   const entry=Math.max(0,Math.min(1,overlap/(2*ball.r)));
   const ux=rx/d,uy=ry/d;
+
+  // Absolute anti-hover invariant: a ball that is deep in the cup and has
+  // effectively stopped can never remain visible on the cup surface.
+  if(s<.12){
+    if(entry>=.52 || d<=hole.r*.84){
+      fastCupTransit=false;fastCupCooldown=false;cupEscapeLock=false;
+      beginDrop();return dropPhysics();
+    }
+    if(s<.001)return false;
+  }
+
   const radial=ball.vx*ux+ball.vy*uy;
   const tangential=-ball.vx*uy+ball.vy*ux;
   const lineOffset=Math.abs(rx*ball.vy-ry*ball.vx)/Math.max(s,.001);
   const central=lineOffset<ball.r*.27;
 
-  // Establish the irreversible high-speed state on FIRST meaningful overlap.
-  // 5.35 matches the existing upper boundary of normal capture behavior.
+  // High-speed transit starts on first meaningful overlap.
   if(!fastCupTransit && entry>.08 && s>5.35)fastCupTransit=true;
 
   if(entry>.28)cupWasInside=true;
@@ -181,18 +186,21 @@ function cupPhysics(){
   else if(cupPeakEntry>.42 && entry<cupPeakEntry-.035){cupEntryFalling++}
   if(entry>.14 && (Math.abs(radial)>.16 || Math.abs(tangential)>.45))sfxRim(s);
 
-  // Centered high-speed transit: cross the open cup with visible energy loss,
-  // but never become a drop during this transit, even if speed later falls.
+  // A centered fast ball keeps crossing while it still has real transit energy.
+  // If cup interaction has killed that energy while the ball is deep, transition
+  // to DROP instead of preserving the old fast flag forever.
   if(fastCupTransit && central){
     if(fullStraightShot && !topWallAfterFast)crossedCupFast=true;
+    if(entry>=.58 && s<=2.15){
+      fastCupTransit=false;fastCupCooldown=false;
+      beginDrop();return dropPhysics();
+    }
     const loss=.989-.024*entry;
     ball.vx*=loss;ball.vy*=loss;
     return false;
   }
 
-  // Continuous lip contact for offset entries. High-speed offset balls may be
-  // deflected by the lip, but fastCupTransit still forbids capture this episode.
-  const support=Math.max(0,1-entry);
+  // Offset lip interaction.
   let nr=radial;
   let nt=tangential;
   if(nr>0) nr*=Math.max(.18,.96-.70*entry);
@@ -206,37 +214,48 @@ function cupPhysics(){
   const v2=speed();
   const outwardNow=(ball.vx*ux+ball.vy*uy);
 
-  // Once a high-speed offset ball starts leaving, freeze out all cup capture
-  // until it has completely cleared the neighborhood.
-  if(fastCupTransit && cupWasInside && cupPeakEntry>.38 && cupEntryFalling>=1 && outwardNow>.02){
+  // Genuine high-speed escape: once clearly moving out, never suck it back.
+  if(fastCupTransit && cupWasInside && cupPeakEntry>.38 &&
+     cupEntryFalling>=1 && outwardNow>.02 && v2>1.15){
     fastCupTransit=false;fastCupCooldown=true;cupMode='free';
     return false;
   }
 
-  // V20.6: deep + slow + not escaping means the cup has truly retained the ball.
-  // This prevents the V20.5 hover state without re-enabling snap-back on lip-outs.
-  const deepSettled = entry>=.84 && v2<=2.15 && outwardNow<=.015 && cupEntryFalling===0;
-  if(fastCupTransit && deepSettled){
-    fastCupTransit=false;fastCupCooldown=false;cupEscapeLock=false;
-    beginDrop();return dropPhysics();
+  // A formerly-fast ball that has become trapped/deep and slow must fall.
+  if(fastCupTransit){
+    const trappedDeep = entry>=.60 && v2<=1.65 && outwardNow<=.10;
+    const almostStoppedDeep = entry>=.52 && v2<=.35;
+    if(trappedDeep || almostStoppedDeep){
+      fastCupTransit=false;fastCupCooldown=false;
+      beginDrop();return dropPhysics();
+    }
+    return false;
   }
 
-  // Genuine high-speed transit remains protected from ordinary capture.
-  if(fastCupTransit)return false;
-
-  // Normal low/moderate-speed capture logic below is intentionally unchanged.
-  const clearlyEscaping = cupWasInside && cupPeakEntry>.48 && cupEntryFalling>=1 && outwardNow>.035;
+  // Normal low/moderate-speed escape.
+  const clearlyEscaping = cupWasInside && cupPeakEntry>.48 &&
+                          cupEntryFalling>=1 && outwardNow>.035;
   const energeticEscape = clearlyEscaping && (v2>2.55 || Math.abs(nt)>2.15);
   if(energeticEscape){
     cupEscapeLock=true;cupMode='free';
     return false;
   }
 
+  // Normal capture.
   const offsetRatio=Math.min(1,lineOffset/(hole.r||1));
   const captureDepth=.60+.18*offsetRatio;
   const captureSpeed=4.7-2.2*offsetRatio;
-  if(cupEntryFalling===0 && entry>=captureDepth && v2<=captureSpeed){beginDrop();return dropPhysics()}
-  if(cupEntryFalling===0 && entry>=.88 && v2<=5.7){beginDrop();return dropPhysics()}
+  if(cupEntryFalling===0 && entry>=captureDepth && v2<=captureSpeed){
+    beginDrop();return dropPhysics();
+  }
+  if(cupEntryFalling===0 && entry>=.88 && v2<=5.7){
+    beginDrop();return dropPhysics();
+  }
+
+  // Final invariant catches numerical dead zones between the rules above.
+  if(entry>=.62 && v2<=.55 && outwardNow<=.08){
+    beginDrop();return dropPhysics();
+  }
 
   return false;
 }
