@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第一关 V20.2 · Golf Sound</title>
+<title>迷你高尔夫 第一关 V20.6 · Deep Cup Capture Fix</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#123b22;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;touch-action:none}
 canvas{display:block;width:100vw;height:100dvh;touch-action:none}
@@ -213,7 +213,15 @@ function cupPhysics(){
     return false;
   }
 
-  // While still in high-speed transit, no drop/capture branch is reachable.
+  // V20.6: deep + slow + not escaping means the cup has truly retained the ball.
+  // This prevents the V20.5 hover state without re-enabling snap-back on lip-outs.
+  const deepSettled = entry>=.84 && v2<=2.15 && outwardNow<=.015 && cupEntryFalling===0;
+  if(fastCupTransit && deepSettled){
+    fastCupTransit=false;fastCupCooldown=false;cupEscapeLock=false;
+    beginDrop();return dropPhysics();
+  }
+
+  // Genuine high-speed transit remains protected from ordinary capture.
   if(fastCupTransit)return false;
 
   // Normal low/moderate-speed capture logic below is intentionally unchanged.
