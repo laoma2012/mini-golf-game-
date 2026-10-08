@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第二关 V22 Prototype · 轻微转弯</title>
+<title>迷你高尔夫 第二关 V22.1 · 直角斜面三反路线</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#123b22;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;touch-action:none}
 canvas{display:block;width:100vw;height:100dvh;touch-action:none}
@@ -15,7 +15,7 @@ canvas{display:block;width:100vw;height:100dvh;touch-action:none}
 </style></head>
 <body>
 <canvas id="c"></canvas>
-<div id="hud"><b>第二关 · 轻微转弯 · PAR 2　杆数：<span id="n">0</span></b><div class="sub">可直打，也可以利用左墙反弹</div></div>
+<div id="hud"><b>第二关 · 直角弯 · PAR 2　杆数：<span id="n">0</span></b><div class="sub">正常两杆 · 隐藏路线：满力三次反射可一杆进洞</div></div>
 <div id="msg"></div><button id="reset">重新开始</button>
 <script>
 (()=>{
@@ -45,19 +45,39 @@ const TOP_SAFE=72;
 
 function rr(x,y,w,h,r){g.beginPath();g.moveTo(x+r,y);g.lineTo(x+w-r,y);g.quadraticCurveTo(x+w,y,x+w,y+r);g.lineTo(x+w,y+h-r);g.quadraticCurveTo(x+w,y+h,x+w-r,y+h);g.lineTo(x+r,y+h);g.quadraticCurveTo(x,y+h,x,y+h-r);g.lineTo(x,y+r);g.quadraticCurveTo(x,y,x+r,y);g.closePath()}
 function courseGeom(){
-  const T=TOP_SAFE,B=H-10,laneH=B-T;
-  const w=Math.min(W*.66,laneH/2.75);
-  const shift=Math.min(w*.30,W*.115);
-  const turnY=T+laneH*.56;
-  const bottomCx=W/2-shift*.08;
-  const topCx=bottomCx+shift;
-  const L0=bottomCx-w/2,R0=bottomCx+w/2;
-  const L1=topCx-w/2,R1=topCx+w/2;
+  // V22.1 official Level-2 blueprint.
+  // QC calibration: full pull at about -92.8° (2.8° left of vertical) produces exactly 3 wall reflections on the 390x844 reference layout.
+  // Design coordinates are calibrated at 390 x 844 and uniformly scaled,
+  // so wall angles remain unchanged across phone sizes.
+  const BASE_W=390, BASE_TOP=72, BASE_BOTTOM=834, BASE_H=BASE_BOTTOM-BASE_TOP;
+  const s=Math.min(W/BASE_W,(H-10-TOP_SAFE)/BASE_H);
+  const ox=(W-BASE_W*s)/2;
+  const bottom=H-10;
+  const X=x=>ox+x*s;
+  const Y=y=>bottom-(BASE_BOTTOM-y)*s;
+
+  // Clockwise polygon:
+  // bottom stem -> inner vertical -> 45-ish bevel -> lower horizontal arm
+  // -> right end wall -> top wall -> upper-left slanted wall -> outer vertical stem.
   const poly=[
-    {x:L0,y:B},{x:R0,y:B},{x:R0,y:turnY},
-    {x:R1,y:T},{x:L1,y:T},{x:L0,y:turnY}
+    {x:X(70), y:Y(834)},
+    {x:X(180),y:Y(834)},
+    {x:X(180),y:Y(455)},
+    {x:X(235),y:Y(410)},   // inner bevel at the 90° turn
+    {x:X(350),y:Y(410)},   // lower edge of right arm
+    {x:X(350),y:Y(185)},   // right end wall
+    {x:X(140),y:Y(185)},   // top wall
+    {x:X(70), y:Y(400)}    // upper-left slanted wall
   ];
-  return{T,B,laneH,w,shift,turnY,bottomCx,topCx,L0,R0,L1,R1,poly};
+
+  return{
+    s,ox,poly,
+    startX:X(125),startY:Y(742),
+    holeX:X(320),holeY:Y(382),
+    // Calibrated hidden full-power line on the reference layout:
+    // ~2.8° left of straight up -> upper-left slant -> top -> right wall -> cup.
+    hiddenAimDeg:-92.8
+  };
 }
 function pointInPoly(x,y,p){
   let inside=false;
@@ -122,13 +142,10 @@ function sfxCup(v){
 function updateRoll(){if(!AC||!rollGain)return;const s=speed(),active=!won&&cupMode!=='drop'&&s>.55;/* intentionally subtle: turf roll is ambience, not the main effect */const target=active?Math.min(.012,.0012+Math.max(0,s-.55)*.00085):0;rollGain.gain.setTargetAtTime(target,AC.currentTime,.055);rollFilter.frequency.setTargetAtTime(260+Math.min(420,s*28),AC.currentTime,.07)}
 function speed(){return Math.hypot(ball.vx,ball.vy)}
 function reset(full=true){
- ball.r=Math.max(9,Math.min(12,W*.024)); hole.r=ball.r*2.53;
  const q=courseGeom();
- // Level 2: same V21.1 cup geometry/physics, new 30°-style gentle bend layout.
- hole.x=q.topCx+q.w*.08;
- hole.y=q.T+6*hole.r;
- ball.x=q.bottomCx;
- ball.y=H-BOTTOM_SAFE-1.5*ball.r;
+ ball.r=Math.max(9,Math.min(12,W*.024)); hole.r=ball.r*2.53;
+ hole.x=q.holeX; hole.y=q.holeY;
+ ball.x=q.startX; ball.y=q.startY;
  ball.vx=ball.vy=0;drag=false;won=false;
  showFlag=true;fullStraightShot=false;crossedCupFast=false;topWallAfterFast=false;
  cupMode='free';cupEntrySpeed=0;cupEscapeLock=false;cupWasInside=false;cupPeakEntry=0;cupEntryFalling=0;fastCupTransit=false;fastCupCooldown=false;ball.z=0;ball.vz=0;ball.alpha=1;ball.scale=1;
@@ -348,26 +365,20 @@ function draw(){
  g.clearRect(0,0,W,H);g.fillStyle='#123b22';g.fillRect(0,0,W,H);
  const q=courseGeom(),p=q.poly;
 
- // Playable turf.
+ // Turf
  g.fillStyle='#42ae61';g.beginPath();g.moveTo(p[0].x,p[0].y);
  for(let i=1;i<p.length;i++)g.lineTo(p[i].x,p[i].y);
  g.closePath();g.fill();
 
- // Subtle center guide through the bend.
- g.strokeStyle='rgba(255,255,255,.055)';g.lineWidth=Math.max(18,q.w*.18);
- g.lineCap='round';g.beginPath();g.moveTo(q.bottomCx,q.B-ball.r*2);
- g.lineTo(q.bottomCx,q.turnY);
- g.lineTo(q.topCx,q.T+hole.r*3.2);g.stroke();
-
- // Physical stone-wall prototype outline.
- g.strokeStyle='rgba(235,235,225,.70)';g.lineWidth=4;g.lineJoin='round';
+ // Prototype wall outline
+ g.strokeStyle='rgba(235,235,225,.78)';g.lineWidth=Math.max(3,4*q.s);g.lineJoin='round';
  g.beginPath();g.moveTo(p[0].x,p[0].y);
  for(let i=1;i<p.length;i++)g.lineTo(p[i].x,p[i].y);
  g.closePath();g.stroke();
 
- // Turn marker for prototype validation only.
- g.fillStyle='rgba(255,255,255,.72)';g.font='700 13px sans-serif';
- g.fillText('轻微转弯',q.L0+10,q.turnY-12);
+ // Make the turn bevel visually clear, without drawing the hidden solution line.
+ g.strokeStyle='rgba(255,255,255,.28)';g.lineWidth=Math.max(2,2.5*q.s);
+ g.beginPath();g.moveTo(p[2].x,p[2].y);g.lineTo(p[3].x,p[3].y);g.stroke();
 
  // cup
  g.fillStyle='#111';g.beginPath();g.arc(hole.x,hole.y,hole.r,0,Math.PI*2);g.fill();
