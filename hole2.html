@@ -1,232 +1,129 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>Mini Golf V22 - Hole 2 Geometry Prototype</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>Mini Golf V22 · Hole 2</title>
 <style>
-  :root { font-family: Arial, "Microsoft YaHei", sans-serif; }
-  body { margin:0; background:#f3f3ef; color:#202020; display:flex; justify-content:center; }
-  .wrap { width:min(100%, 980px); padding:16px 16px calc(28px + env(safe-area-inset-bottom)); box-sizing:border-box; }
-  h1 { font-size:20px; margin:0 0 8px; }
-  .note { font-size:13px; line-height:1.5; margin-bottom:10px; }
-  canvas { width:100%; height:auto; background:#dfe9d3; border-radius:14px; display:block; touch-action:none; }
-  .controls { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
-  button { font-size:15px; padding:10px 13px; border:1px solid #aaa; border-radius:9px; background:white; cursor:pointer; min-height:44px; }
-  .readout { margin-top:10px; padding:10px 12px; background:white; border-radius:10px; font-size:14px; line-height:1.6; }
-  .ok { font-weight:700; }
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#d9e7cf;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+#game{display:block;width:100vw;height:100vh;touch-action:none}
+#hud{position:fixed;left:14px;right:14px;top:calc(10px + env(safe-area-inset-top));display:flex;justify-content:space-between;align-items:center;pointer-events:none;color:#1f2b22;font-weight:700;text-shadow:0 1px 0 rgba(255,255,255,.8)}
+#hud .pill{background:rgba(255,255,255,.78);backdrop-filter:blur(8px);padding:8px 12px;border-radius:999px;font-size:14px}
+#reset{position:fixed;right:14px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:3;border:0;border-radius:999px;background:rgba(255,255,255,.86);padding:11px 15px;font-size:14px;font-weight:700;color:#283228;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+#tip{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));transform:translateX(-50%);pointer-events:none;background:rgba(24,34,26,.78);color:white;padding:8px 12px;border-radius:999px;font-size:13px;white-space:nowrap;transition:opacity .3s}
+#result{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.15);z-index:4}
+#result .card{background:white;border-radius:24px;padding:24px 28px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.2)}
+#result h2{margin:0 0 6px;font-size:28px} #result p{margin:0;color:#555}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>V22 第二关：4° → 47° 一杆线路验证原型</h1>
-  <div class="note">
-    只验证几何与反弹路线。球道纵向、右转后横向宽度均为 1.5 m；内侧转角为 90°；
-    外侧斜挡板为 47°。虚线是理论线路，按钮会按“向左 4°”真实发球。
-  </div>
-  <canvas id="c" width="940" height="720"></canvas>
-  <div class="controls">
-    <button id="test">▶ 测试：向左 4°</button>
-    <button id="reset">重置</button>
-    <button id="guide">显示/隐藏理论线</button>
-  </div>
-  <div class="readout" id="out"></div>
-</div>
-
+<canvas id="game"></canvas>
+<div id="hud"><div class="pill">第 2 洞</div><div class="pill" id="strokeHud">杆数 0</div></div>
+<button id="reset">重置</button>
+<div id="tip">按住白球向后拖动，松手击球</div>
+<div id="result"><div class="card"><h2 id="resultTitle">进洞</h2><p id="resultText"></p></div></div>
 <script>
-const cvs = document.getElementById('c'), ctx = cvs.getContext('2d');
-const W=cvs.width,H=cvs.height;
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const strokeHud=document.getElementById('strokeHud'),tip=document.getElementById('tip'),result=document.getElementById('result');
+const resultTitle=document.getElementById('resultTitle'),resultText=document.getElementById('resultText');
+let DPR=1,W=0,H=0,S=1,ox=0,oy=0;
+function resize(){DPR=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;canvas.width=W*DPR;canvas.height=H*DPR;ctx.setTransform(DPR,0,0,DPR,0,0);
+ const worldW=8.2,worldH=7.1; S=Math.min((W-24)/worldW,(H-74)/worldH); ox=(W-worldW*S)/2; oy=(H-worldH*S)/2+16;}
+addEventListener('resize',resize);resize();
 
-const tee = {x:0.75,y:0.50};
-const wallPivot = {x:0.0,y:5.0};
-const wallAngle = 47*Math.PI/180;
-const corridorTopY = 6.25;
-const diagEnd = {
-  x:(corridorTopY-wallPivot.y)/Math.tan(wallAngle),
-  y:corridorTopY
-};
-const poly = [
-  {x:0,y:0},
-  {x:1.5,y:0},
-  {x:1.5,y:4.75},
-  {x:7.5,y:4.75},
-  {x:7.5,y:6.25},
-  {x:diagEnd.x,y:6.25},
-  {x:0,y:5.0}
+const tee={x:.75,y:.55}, hole={x:6.72,y:5.60};
+const wallAngle=47*Math.PI/180;
+const wallPivot={x:0,y:5.0}, wallTopY=6.25;
+const diagEnd={x:(wallTopY-wallPivot.y)/Math.tan(wallAngle),y:wallTopY};
+const course=[
+ {x:0,y:0},{x:1.5,y:0},{x:1.5,y:4.75},{x:7.55,y:4.75},
+ {x:7.55,y:6.25},{x:diagEnd.x,y:6.25},{x:0,y:5.0}
 ];
+const bunker={x:3.85,y:5.13,rx:.65,ry:.33};
+const ball={x:tee.x,y:tee.y,vx:0,vy:0,r:.075,moving:false,sunk:false};
+let strokes=0,dragging=false,dragPt=null,last=performance.now(),celebrate=0;
 
-const incomingDeg = 94;
-const incoming = {
-  x:Math.cos(incomingDeg*Math.PI/180),
-  y:Math.sin(incomingDeg*Math.PI/180)
-};
+function P(p){return{x:ox+p.x*S,y:H-(oy+p.y*S)}}
+function unP(x,y){return{x:(x-ox)/S,y:(H-y-oy)/S}}
+function reset(showTip=true){Object.assign(ball,{x:tee.x,y:tee.y,vx:0,vy:0,moving:false,sunk:false});strokes=0;strokeHud.textContent='杆数 0';result.style.display='none';celebrate=0;if(showTip)tip.style.opacity='1';draw();}
+document.getElementById('reset').onclick=()=>reset();
 
-function intersectLines(p,d,q,e){
-  const cross=(a,b)=>a.x*b.y-a.y*b.x;
-  const qp={x:q.x-p.x,y:q.y-p.y};
-  const den=cross(d,e);
-  const t=cross(qp,e)/den;
-  const s=cross(qp,d)/den;
-  return {x:p.x+t*d.x,y:p.y+t*d.y,t,s};
+function distToSeg(px,py,a,b){
+ const abx=b.x-a.x,aby=b.y-a.y,l2=abx*abx+aby*aby;
+ let t=((px-a.x)*abx+(py-a.y)*aby)/l2;t=Math.max(0,Math.min(1,t));
+ const x=a.x+t*abx,y=a.y+t*aby;return{x,y,t,d:Math.hypot(px-x,py-y)};
 }
-const wallDir={x:Math.cos(wallAngle),y:Math.sin(wallAngle)};
-const hit=intersectLines(tee,incoming,wallPivot,wallDir);
-
-function reflect(v, lineAngle){
-  const nx=-Math.sin(lineAngle), ny=Math.cos(lineAngle);
-  const dot=v.x*nx+v.y*ny;
-  return {x:v.x-2*dot*nx, y:v.y-2*dot*ny};
-}
-const reflected=reflect(incoming,wallAngle);
-const reflectedDeg=(Math.atan2(reflected.y,reflected.x)*180/Math.PI+360)%360;
-const hole = {x:6.60, y: hit.y + (6.60-hit.x)*(reflected.y/reflected.x)};
-
-const margin=60;
-const sx=(W-2*margin)/7.8;
-const sy=(H-2*margin)/6.55;
-const scale=Math.min(sx,sy);
-function S(p){ return {x:margin+p.x*scale, y:H-margin-p.y*scale}; }
-
-let showGuide=true;
-const ball={x:tee.x,y:tee.y,vx:0,vy:0,r:0.075,moving:false,sunk:false};
-let status="待测试";
-let bounces=0;
-
-function reset(){
-  Object.assign(ball,{x:tee.x,y:tee.y,vx:0,vy:0,moving:false,sunk:false});
-  status="待测试"; bounces=0; draw(); updateOut();
-}
-function launch4(){
-  reset();
-  const speed=3.9;
-  ball.vx=incoming.x*speed;
-  ball.vy=incoming.y*speed;
-  ball.moving=true;
-  status="运行中";
-  updateOut();
-}
-
-function pointSegClosest(px,py,ax,ay,bx,by){
-  const abx=bx-ax, aby=by-ay;
-  let t=((px-ax)*abx+(py-ay)*aby)/(abx*abx+aby*aby);
-  t=Math.max(0,Math.min(1,t));
-  return {x:ax+t*abx,y:ay+t*aby,t};
-}
-
-function collideWalls(){
-  for(let i=0;i<poly.length;i++){
-    const a=poly[i], b=poly[(i+1)%poly.length];
-    const cp=pointSegClosest(ball.x,ball.y,a.x,a.y,b.x,b.y);
-    const dx=ball.x-cp.x, dy=ball.y-cp.y;
-    const dist=Math.hypot(dx,dy);
-    if(dist < ball.r){
-      const ex=b.x-a.x, ey=b.y-a.y, el=Math.hypot(ex,ey);
-      let nx=-ey/el, ny=ex/el;
-      const side=(ball.x-cp.x)*nx+(ball.y-cp.y)*ny;
-      if(side < 0){ nx=-nx; ny=-ny; }
-      const penetration=ball.r-dist;
-      ball.x += nx*(penetration+0.001);
-      ball.y += ny*(penetration+0.001);
-      const vn=ball.vx*nx+ball.vy*ny;
-      if(vn<0){
-        const restitution=0.88;
-        ball.vx -= (1+restitution)*vn*nx;
-        ball.vy -= (1+restitution)*vn*ny;
-        bounces++;
-      }
-    }
+function collide(){
+ for(let i=0;i<course.length;i++){
+  const a=course[i],b=course[(i+1)%course.length],cp=distToSeg(ball.x,ball.y,a,b);
+  if(cp.d<ball.r){
+   const ex=b.x-a.x,ey=b.y-a.y,el=Math.hypot(ex,ey);
+   let nx=-ey/el,ny=ex/el;
+   if((ball.x-cp.x)*nx+(ball.y-cp.y)*ny<0){nx=-nx;ny=-ny}
+   ball.x+=nx*(ball.r-cp.d+.001);ball.y+=ny*(ball.r-cp.d+.001);
+   const vn=ball.vx*nx+ball.vy*ny;
+   if(vn<0){
+    const isPrecisionWall=(i===5 || i===6); // diagonal/adjacent outer turn
+    const e=isPrecisionWall?1.0:.86;
+    ball.vx-=(1+e)*vn*nx;ball.vy-=(1+e)*vn*ny;
+   }
   }
+ }
 }
-
+function inBunker(){const dx=(ball.x-bunker.x)/bunker.rx,dy=(ball.y-bunker.y)/bunker.ry;return dx*dx+dy*dy<=1}
 function step(dt){
-  if(!ball.moving || ball.sunk) return;
-  ball.x += ball.vx*dt;
-  ball.y += ball.vy*dt;
-  collideWalls();
-
-  const sp=Math.hypot(ball.vx,ball.vy);
-  const decel=0.28;
-  if(sp>0){
-    const ns=Math.max(0,sp-decel*dt);
-    ball.vx*=ns/sp; ball.vy*=ns/sp;
-  }
-
-  const dh=Math.hypot(ball.x-hole.x,ball.y-hole.y);
-  if(dh < 0.12 && Math.hypot(ball.vx,ball.vy)<3.6){
-    ball.sunk=true; ball.moving=false; status="一杆入洞：几何路线成立";
-    updateOut();
-  } else if(sp<0.035){
-    ball.moving=false; status="停球：未入洞";
-    updateOut();
-  }
+ if(!ball.moving||ball.sunk)return;
+ ball.x+=ball.vx*dt;ball.y+=ball.vy*dt;collide();
+ let sp=Math.hypot(ball.vx,ball.vy);
+ const dec=inBunker()?1.55:.30;
+ if(sp>0){const ns=Math.max(0,sp-dec*dt);ball.vx*=ns/sp;ball.vy*=ns/sp;sp=ns}
+ const dh=Math.hypot(ball.x-hole.x,ball.y-hole.y);
+ if(dh<.115 && sp<3.2){ball.sunk=true;ball.moving=false;celebrate=1;setTimeout(()=>{resultTitle.textContent=strokes===1?'一杆进洞！':'进洞！';resultText.textContent='第 '+strokes+' 杆完成';result.style.display='flex'},500)}
+ else if(sp<.025){ball.vx=ball.vy=0;ball.moving=false}
 }
+function pointer(e){const r=canvas.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top}}
+canvas.addEventListener('pointerdown',e=>{
+ if(ball.moving||ball.sunk)return;const m=pointer(e),bp=P(ball);
+ if(Math.hypot(m.x-bp.x,m.y-bp.y)<34){dragging=true;dragPt=m;canvas.setPointerCapture(e.pointerId);tip.style.opacity='0'}
+});
+canvas.addEventListener('pointermove',e=>{if(dragging){dragPt=pointer(e);draw()}});
+canvas.addEventListener('pointerup',e=>{
+ if(!dragging)return;dragging=false;const m=pointer(e),bp=P(ball),dx=bp.x-m.x,dy=bp.y-m.y;
+ const len=Math.hypot(dx,dy);if(len<8){dragPt=null;draw();return}
+ const max=145,p=Math.min(len,max)/max,spd=1.0+p*4.9;
+ const wx=dx/len,wy=-dy/len;
+ let power=inBunker()?.68:1;
+ ball.vx=wx*spd*power;ball.vy=wy*spd*power;ball.moving=true;strokes++;strokeHud.textContent='杆数 '+strokes;dragPt=null;
+});
+canvas.addEventListener('pointercancel',()=>{dragging=false;dragPt=null});
 
-function draw(){
-  ctx.clearRect(0,0,W,H);
-  ctx.fillStyle="#dce8cf"; ctx.fillRect(0,0,W,H);
-
-  ctx.beginPath();
-  poly.forEach((p,i)=>{const q=S(p); i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y)});
-  ctx.closePath();
-  ctx.fillStyle="#78b969"; ctx.fill();
-  ctx.lineWidth=5; ctx.strokeStyle="#6f553a"; ctx.stroke();
-
-  const A=S(wallPivot), B=S(diagEnd);
-  ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(B.x,B.y);
-  ctx.strokeStyle="#a9613c"; ctx.lineWidth=10; ctx.stroke();
-
-  ctx.fillStyle="#202020"; ctx.font="16px Arial";
-  ctx.fillText("外侧 47° 反弹挡板", B.x+10, B.y+18);
-  const inner=S({x:1.5,y:4.75});
-  ctx.fillText("内侧 90°", inner.x+12, inner.y+24);
-
-  const hs=S(hole);
-  ctx.beginPath(); ctx.arc(hs.x,hs.y,0.11*scale,0,Math.PI*2);
-  ctx.fillStyle="#222"; ctx.fill();
-  ctx.beginPath(); ctx.moveTo(hs.x,hs.y); ctx.lineTo(hs.x,hs.y-42);
-  ctx.strokeStyle="#444"; ctx.lineWidth=2; ctx.stroke();
-
-  const ts=S(tee);
-  ctx.beginPath(); ctx.arc(ts.x,ts.y,6,0,Math.PI*2); ctx.fillStyle="#eef4ff"; ctx.fill();
-
-  if(showGuide){
-    const hitS=S(hit), holeS=S(hole);
-    ctx.setLineDash([10,8]); ctx.lineWidth=3; ctx.strokeStyle="#2e5fa3";
-    ctx.beginPath(); ctx.moveTo(ts.x,ts.y); ctx.lineTo(hitS.x,hitS.y); ctx.lineTo(holeS.x,holeS.y); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle="#2e5fa3"; ctx.font="15px Arial";
-    ctx.fillText("向左 4°", ts.x-78, ts.y-55);
-    ctx.fillText("理论反弹点", hitS.x+10, hitS.y-12);
-  }
-
-  if(!ball.sunk){
-    const bs=S(ball);
-    ctx.beginPath(); ctx.arc(bs.x,bs.y,ball.r*scale,0,Math.PI*2);
-    ctx.fillStyle="#fff"; ctx.fill(); ctx.strokeStyle="#777"; ctx.lineWidth=1.5; ctx.stroke();
-  }
+function drawCourse(){
+ ctx.fillStyle='#d8e6ce';ctx.fillRect(0,0,W,H);
+ // decorative islands/trees
+ for(const [x,y,r] of [[.2,6.6,.22],[7.8,6.7,.28],[7.7,1.0,.25],[2.35,1.2,.18],[2.1,6.65,.16]]){
+  const p=P({x,y});ctx.beginPath();ctx.arc(p.x,p.y,r*S,0,Math.PI*2);ctx.fillStyle='#8fbf79';ctx.fill();
+ }
+ ctx.beginPath();course.forEach((p,i)=>{const q=P(p);i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y)});ctx.closePath();
+ ctx.fillStyle='#79bb69';ctx.fill();ctx.lineWidth=6;ctx.strokeStyle='#6f5a3d';ctx.stroke();
+ // bunker
+ const b=P(bunker);ctx.save();ctx.translate(b.x,b.y);ctx.scale(1,.52);ctx.beginPath();ctx.arc(0,0,bunker.rx*S,0,Math.PI*2);ctx.fillStyle='#e8d39d';ctx.fill();ctx.lineWidth=2;ctx.strokeStyle='#cfb97d';ctx.stroke();ctx.restore();
+ // flag/hole
+ const hp=P(hole);ctx.beginPath();ctx.arc(hp.x,hp.y,.105*S,0,Math.PI*2);ctx.fillStyle='#182018';ctx.fill();
+ ctx.beginPath();ctx.moveTo(hp.x,hp.y);ctx.lineTo(hp.x,hp.y-50);ctx.strokeStyle='#f4f2e8';ctx.lineWidth=3;ctx.stroke();
+ ctx.beginPath();ctx.moveTo(hp.x,hp.y-50);ctx.lineTo(hp.x+25,hp.y-41);ctx.lineTo(hp.x,hp.y-32);ctx.closePath();ctx.fillStyle='#d95f4f';ctx.fill();
 }
-
-function updateOut(){
-  const dx=hit.x-tee.x, dy=hit.y-tee.y;
-  const dist=Math.hypot(dx,dy);
-  document.getElementById('out').innerHTML =
-   `<span class="ok">${status}</span><br>`+
-   `理论入射：正前方左偏 4.00°　｜　斜挡板：47.00°<br>`+
-   `理论反弹方向：${reflectedDeg.toFixed(3)}°（0° = 水平向右）<br>`+
-   `理论反弹点：x=${hit.x.toFixed(3)} m，y=${hit.y.toFixed(3)} m　｜　发球点至反弹点=${dist.toFixed(3)} m<br>`+
-   `洞杯中心：x=${hole.x.toFixed(3)} m，y=${hole.y.toFixed(3)} m　｜　当前墙体碰撞次数=${bounces}`;
+function drawAim(){
+ if(!dragging||!dragPt)return;const bp=P(ball),dx=bp.x-dragPt.x,dy=bp.y-dragPt.y,len=Math.hypot(dx,dy)||1,max=145,k=Math.min(len,max)/len;
+ const tx=bp.x+dx*k,ty=bp.y+dy*k;
+ ctx.save();ctx.setLineDash([8,7]);ctx.strokeStyle='rgba(255,255,255,.92)';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(bp.x,bp.y);ctx.lineTo(tx,ty);ctx.stroke();ctx.setLineDash([]);
+ ctx.beginPath();ctx.arc(dragPt.x,dragPt.y,18,0,Math.PI*2);ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=2;ctx.stroke();ctx.restore();
 }
-
-let last=performance.now();
-function loop(now){
-  const dt=Math.min(0.025,(now-last)/1000); last=now;
-  step(dt); draw();
-  requestAnimationFrame(loop);
+function drawBall(){
+ if(ball.sunk)return;const p=P(ball);ctx.beginPath();ctx.arc(p.x,p.y,Math.max(6,ball.r*S),0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();ctx.lineWidth=1.4;ctx.strokeStyle='#777';ctx.stroke();
 }
-document.getElementById('test').onclick=launch4;
-document.getElementById('reset').onclick=reset;
-document.getElementById('guide').onclick=()=>{showGuide=!showGuide;draw();};
-reset(); requestAnimationFrame(loop);
+function draw(){drawCourse();drawAim();drawBall()}
+function loop(now){const dt=Math.min(.02,(now-last)/1000);last=now;for(let i=0;i<2;i++)step(dt/2);draw();requestAnimationFrame(loop)}
+reset();requestAnimationFrame(loop);
 </script>
 </body>
 </html>
