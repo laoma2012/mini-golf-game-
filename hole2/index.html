@@ -74,7 +74,7 @@ function resize(){DPR=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight
  const worldW=8.2,worldH=7.1; S=Math.min((W-24)/worldW,(H-74)/worldH); ox=(W-worldW*S)/2; oy=(H-worldH*S)/2+16;}
 addEventListener('resize',resize);resize();
 
-const tee={x:.75,y:.55}, hole={x:6.72,y:5.60};
+const tee={x:.75,y:.55}, hole={x:6.72,y:5.60,r:.075*2.53};
 const wallAngle=47*Math.PI/180;
 const wallPivot={x:0,y:5.0}, wallTopY=6.25;
 const diagEnd={x:(wallTopY-wallPivot.y)/Math.tan(wallAngle),y:wallTopY};
@@ -83,12 +83,13 @@ const course=[
  {x:7.55,y:6.25},{x:diagEnd.x,y:6.25},{x:0,y:5.0}
 ];
 const bunker={x:3.85,y:5.13,rx:.65,ry:.33};
-const ball={x:tee.x,y:tee.y,vx:0,vy:0,r:.075,moving:false,sunk:false};
+const ball={x:tee.x,y:tee.y,vx:0,vy:0,r:.075,moving:false,sunk:false,z:0,vz:0,alpha:1,scale:1};
 let strokes=0,dragging=false,dragPt=null,last=performance.now(),celebrate=0;
+let cupMode='free',cupWasInside=false,cupPeakEntry=0,cupEntryFalling=0,fastCupTransit=false,fastCupCooldown=false,cupEscapeLock=false;
 
 function P(p){return{x:ox+p.x*S,y:H-(oy+p.y*S)}}
 function unP(x,y){return{x:(x-ox)/S,y:(H-y-oy)/S}}
-function reset(showTip=true){Object.assign(ball,{x:tee.x,y:tee.y,vx:0,vy:0,moving:false,sunk:false});strokes=0;strokeHud.textContent='杆数 0';result.style.display='none';celebrate=0;if(showTip)tip.style.opacity='1';draw();}
+function reset(showTip=true){Object.assign(ball,{x:tee.x,y:tee.y,vx:0,vy:0,moving:false,sunk:false,z:0,vz:0,alpha:1,scale:1});cupMode='free';cupWasInside=false;cupPeakEntry=0;cupEntryFalling=0;fastCupTransit=false;fastCupCooldown=false;cupEscapeLock=false;strokes=0;strokeHud.textContent='杆数 0';result.style.display='none';celebrate=0;if(showTip)tip.style.opacity='1';draw();}
 document.getElementById('reset').onclick=()=>reset();
 
 function distToSeg(px,py,a,b){
@@ -115,15 +116,118 @@ function collide(){
  }
 }
 function inBunker(){const dx=(ball.x-bunker.x)/bunker.rx,dy=(ball.y-bunker.y)/bunker.ry;return dx*dx+dy*dy<=1}
+function finishSink(){
+ if(ball.sunk)return;
+ ball.sunk=true;ball.moving=false;celebrate=1;
+ setTimeout(()=>{resultTitle.textContent=strokes===1?'一杆进洞！':'进洞！';resultText.textContent='第 '+strokes+' 杆完成';result.style.display='flex'},380);
+}
+function beginDrop(){
+ if(cupMode==='drop')return;
+ cupMode='drop';ball.z=0;ball.vz=.55;
+}
+function dropPhysics(dt){
+ // V21-style visual drop: retain a little horizontal momentum, then shrink/fade.
+ ball.x+=ball.vx*dt;ball.y+=ball.vy*dt;
+ ball.vx*=Math.pow(.90,dt*60);ball.vy*=Math.pow(.90,dt*60);
+ ball.vz+=.34*dt*60;ball.z+=ball.vz*dt*60;
+ const t=Math.min(1,ball.z/(ball.r*2.7));
+ ball.scale=1-.38*t;ball.alpha=1-.72*t;
+ if(t>=1){finishSink();return true}
+ return false;
+}
+function cupPhysics(dt){
+ if(cupMode==='drop')return dropPhysics(dt);
+
+ const rx=ball.x-hole.x,ry=ball.y-hole.y;
+ const d=Math.hypot(rx,ry)||.000001;
+ const s=Math.hypot(ball.vx,ball.vy);
+ const contact=hole.r+ball.r;
+ const overlap=contact-d;
+
+ if(fastCupCooldown){
+   if(d>contact+ball.r*2.05){
+     fastCupCooldown=false;fastCupTransit=false;cupEscapeLock=false;
+     cupWasInside=false;cupPeakEntry=0;cupEntryFalling=0;cupMode='free';
+   }else return false;
+ }
+ if(cupEscapeLock){
+   if(d>contact+ball.r*2.05){
+     cupEscapeLock=false;cupWasInside=false;cupPeakEntry=0;cupEntryFalling=0;cupMode='free';
+   }else return false;
+ }
+ if(overlap<=0){
+   if(fastCupTransit){fastCupTransit=false;fastCupCooldown=true}
+   else {cupWasInside=false;cupPeakEntry=0;cupEntryFalling=0}
+   return false;
+ }
+ if(s<.0001)return false;
+
+ const entry=Math.max(0,Math.min(1,overlap/(2*ball.r)));
+ const ux=rx/d,uy=ry/d;
+ const radial=ball.vx*ux+ball.vy*uy;
+ const tangential=-ball.vx*uy+ball.vy*ux;
+ const lineOffset=Math.abs(rx*ball.vy-ry*ball.vx)/Math.max(s,.0001);
+ const central=lineOffset<ball.r*.27;
+
+ // Thresholds scaled for Hole 2's meter/second physics.
+ if(!fastCupTransit && entry>.08 && s>3.55)fastCupTransit=true;
+ if(entry>.28)cupWasInside=true;
+ if(entry>cupPeakEntry+.008){cupPeakEntry=entry;cupEntryFalling=0}
+ else if(cupPeakEntry>.42 && entry<cupPeakEntry-.035){cupEntryFalling++}
+
+ if(fastCupTransit && central){
+   const loss=.989-.024*entry;
+   ball.vx*=loss;ball.vy*=loss;
+   return false;
+ }
+
+ let nr=radial,nt=tangential;
+ if(nr>0)nr*=Math.max(.18,.96-.70*entry);
+ else nr*=Math.max(.55,.995-.20*entry);
+ nt*=Math.max(.86,.998-.055*entry);
+ const inward=.010+.075*entry*entry;
+ nr-=inward*(.55+Math.min(1,2.0/Math.max(s,.2))*.45);
+ ball.vx=nr*ux-nt*uy;ball.vy=nr*uy+nt*ux;
+
+ const v2=Math.hypot(ball.vx,ball.vy);
+ const outwardNow=ball.vx*ux+ball.vy*uy;
+
+ if(fastCupTransit && cupWasInside && cupPeakEntry>.38 && cupEntryFalling>=1 && outwardNow>.02){
+   fastCupTransit=false;fastCupCooldown=true;cupMode='free';return false;
+ }
+ if(fastCupTransit)return false;
+
+ const clearlyEscaping=cupWasInside&&cupPeakEntry>.48&&cupEntryFalling>=1&&outwardNow>.035;
+ if(clearlyEscaping&&(v2>1.70||Math.abs(nt)>1.45)){
+   cupEscapeLock=true;cupMode='free';return false;
+ }
+
+ const offsetRatio=Math.min(1,lineOffset/(hole.r||1));
+ const captureDepth=.60+.18*offsetRatio;
+ const captureSpeed=3.15-1.45*offsetRatio;
+
+ // Deep + slow must drop; ~75% body entry strongly commits unless clearly escaping.
+ if(cupEntryFalling===0 && entry>=captureDepth && v2<=captureSpeed){beginDrop();return dropPhysics(dt)}
+ if(cupEntryFalling===0 && entry>=.75 && v2<=3.45){beginDrop();return dropPhysics(dt)}
+ if(v2<.08 && entry>.45){beginDrop();return dropPhysics(dt)}
+ return false;
+}
 function step(dt){
- if(!ball.moving||ball.sunk)return;
+ if(ball.sunk)return;
+ if(cupMode==='drop'){dropPhysics(dt);return}
+ if(!ball.moving)return;
+
  ball.x+=ball.vx*dt;ball.y+=ball.vy*dt;collide();
+ if(cupPhysics(dt))return;
+
  let sp=Math.hypot(ball.vx,ball.vy);
  const dec=inBunker()?1.55:.30;
- if(sp>0){const ns=Math.max(0,sp-dec*dt);ball.vx*=ns/sp;ball.vy*=ns/sp;sp=ns}
- const dh=Math.hypot(ball.x-hole.x,ball.y-hole.y);
- if(dh<.115 && sp<3.2){ball.sunk=true;ball.moving=false;celebrate=1;setTimeout(()=>{resultTitle.textContent=strokes===1?'一杆进洞！':'进洞！';resultText.textContent='第 '+strokes+' 杆完成';result.style.display='flex'},500)}
- else if(sp<.025){ball.vx=ball.vy=0;ball.moving=false}
+ if(sp>0){
+   const ns=Math.max(0,sp-dec*dt);
+   ball.vx*=ns/sp;ball.vy*=ns/sp;sp=ns;
+ }
+ if(cupPhysics(dt))return;
+ if(sp<.025){ball.vx=ball.vy=0;ball.moving=false}
 }
 function pointer(e){const r=canvas.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top}}
 canvas.addEventListener('pointerdown',e=>{
@@ -138,7 +242,7 @@ canvas.addEventListener('pointerup',e=>{
  const max=145,p=Math.min(len,max)/max,spd=1.0+p*4.9;
  const wx=dx/len,wy=-dy/len;
  let power=inBunker()?.68:1;
- ball.vx=wx*spd*power;ball.vy=wy*spd*power;sfxStrike(Math.hypot(ball.vx,ball.vy));ball.moving=true;strokes++;strokeHud.textContent='杆数 '+strokes;dragPt=null;
+ cupMode='free';cupWasInside=false;cupPeakEntry=0;cupEntryFalling=0;fastCupTransit=false;fastCupCooldown=false;cupEscapeLock=false;ball.vx=wx*spd*power;ball.vy=wy*spd*power;sfxStrike(Math.hypot(ball.vx,ball.vy));ball.moving=true;strokes++;strokeHud.textContent='杆数 '+strokes;dragPt=null;
 });
 canvas.addEventListener('pointercancel',()=>{dragging=false;dragPt=null});
 
@@ -153,7 +257,7 @@ function drawCourse(){
  // bunker
  const b=P(bunker);ctx.save();ctx.translate(b.x,b.y);ctx.scale(1,.52);ctx.beginPath();ctx.arc(0,0,bunker.rx*S,0,Math.PI*2);ctx.fillStyle='#e8d39d';ctx.fill();ctx.lineWidth=2;ctx.strokeStyle='#cfb97d';ctx.stroke();ctx.restore();
  // flag/hole
- const hp=P(hole);ctx.beginPath();ctx.arc(hp.x,hp.y,.105*S,0,Math.PI*2);ctx.fillStyle='#182018';ctx.fill();
+ const hp=P(hole);ctx.beginPath();ctx.arc(hp.x,hp.y,hole.r*S,0,Math.PI*2);ctx.fillStyle='#182018';ctx.fill();
  ctx.beginPath();ctx.moveTo(hp.x,hp.y);ctx.lineTo(hp.x,hp.y-50);ctx.strokeStyle='#f4f2e8';ctx.lineWidth=3;ctx.stroke();
  ctx.beginPath();ctx.moveTo(hp.x,hp.y-50);ctx.lineTo(hp.x+25,hp.y-41);ctx.lineTo(hp.x,hp.y-32);ctx.closePath();ctx.fillStyle='#d95f4f';ctx.fill();
 }
@@ -164,7 +268,7 @@ function drawAim(){
  ctx.beginPath();ctx.arc(dragPt.x,dragPt.y,18,0,Math.PI*2);ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=2;ctx.stroke();ctx.restore();
 }
 function drawBall(){
- if(ball.sunk)return;const p=P(ball);ctx.beginPath();ctx.arc(p.x,p.y,Math.max(6,ball.r*S),0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();ctx.lineWidth=1.4;ctx.strokeStyle='#777';ctx.stroke();
+ if(ball.sunk)return;const p=P(ball);ctx.save();ctx.globalAlpha=ball.alpha;ctx.beginPath();ctx.arc(p.x,p.y,Math.max(2,ball.r*S*ball.scale),0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();ctx.lineWidth=1.4;ctx.strokeStyle='#777';ctx.stroke();ctx.restore();
 }
 function draw(){drawCourse();drawAim();drawBall()}
 function loop(now){const dt=Math.min(.02,(now-last)/1000);last=now;for(let i=0;i<2;i++)step(dt/2);updateRoll();draw();requestAnimationFrame(loop)}
