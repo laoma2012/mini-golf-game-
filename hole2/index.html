@@ -24,6 +24,49 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#d9e7cf;fon
 <div id="result"><div class="card"><h2 id="resultTitle">进洞</h2><p id="resultText"></p></div></div>
 <script>
 const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+let AC=null,master=null,rollSrc=null,rollGain=null,rollFilter=null;
+function audioInit(){
+ if(AC)return;
+ AC=new (window.AudioContext||window.webkitAudioContext)();
+ master=AC.createGain();master.gain.value=.72;master.connect(AC.destination);
+ const n=AC.sampleRate*2,b=AC.createBuffer(1,n,AC.sampleRate),a=b.getChannelData(0);
+ for(let i=0;i<n;i++)a[i]=Math.random()*2-1;
+ rollSrc=AC.createBufferSource();rollSrc.buffer=b;rollSrc.loop=true;
+ rollFilter=AC.createBiquadFilter();rollFilter.type='lowpass';rollFilter.frequency.value=520;rollFilter.Q.value=.35;
+ rollGain=AC.createGain();rollGain.gain.value=0;
+ rollSrc.connect(rollFilter).connect(rollGain).connect(master);rollSrc.start();
+}
+function tone(freq,dur,vol=.1,type='sine',endFreq=null){
+ if(!AC)return;const t=AC.currentTime,o=AC.createOscillator(),gn=AC.createGain();
+ o.type=type;o.frequency.setValueAtTime(freq,t);if(endFreq)o.frequency.exponentialRampToValueAtTime(endFreq,t+dur);
+ gn.gain.setValueAtTime(Math.max(.0001,vol),t);gn.gain.exponentialRampToValueAtTime(.0001,t+dur);
+ o.connect(gn).connect(master);o.start(t);o.stop(t+dur+.02);
+}
+function noiseHit(dur=.04,vol=.08,freq=1600){
+ if(!AC)return;const n=Math.max(1,Math.floor(AC.sampleRate*dur)),b=AC.createBuffer(1,n,AC.sampleRate),a=b.getChannelData(0);
+ for(let i=0;i<n;i++)a[i]=(Math.random()*2-1)*Math.pow(1-i/n,2);
+ const src=AC.createBufferSource(),flt=AC.createBiquadFilter(),gn=AC.createGain();
+ src.buffer=b;flt.type='bandpass';flt.frequency.value=freq;flt.Q.value=.8;gn.gain.value=vol;
+ src.connect(flt).connect(gn).connect(master);src.start();
+}
+function sfxStrike(v){
+ audioInit();const q=Math.min(1,v/6);
+ tone(1180+420*q,.014,.040+.095*q,'triangle',760+180*q);
+ tone(330+80*q,.022,.018+.035*q,'sine',250);
+ noiseHit(.009,.010+.025*q,2800+900*q);
+}
+function sfxWall(v){
+ audioInit();const q=Math.min(1,v/6);
+ tone(390+220*q,.045+.018*q,.07+.11*q,'triangle',250+120*q);
+ noiseHit(.028,.035+.05*q,1800+700*q);
+}
+function updateRoll(){
+ if(!AC||!rollGain)return;
+ const s=Math.hypot(ball.vx,ball.vy),active=!ball.sunk&&s>.12;
+ const target=active?Math.min(.012,.0012+Math.max(0,s-.12)*.002):0;
+ rollGain.gain.setTargetAtTime(target,AC.currentTime,.055);
+ rollFilter.frequency.setTargetAtTime(260+Math.min(420,s*70),AC.currentTime,.07);
+}
 const strokeHud=document.getElementById('strokeHud'),tip=document.getElementById('tip'),result=document.getElementById('result');
 const resultTitle=document.getElementById('resultTitle'),resultText=document.getElementById('resultText');
 let DPR=1,W=0,H=0,S=1,ox=0,oy=0;
@@ -63,9 +106,10 @@ function collide(){
    ball.x+=nx*(ball.r-cp.d+.001);ball.y+=ny*(ball.r-cp.d+.001);
    const vn=ball.vx*nx+ball.vy*ny;
    if(vn<0){
+    const impactSpeed=Math.hypot(ball.vx,ball.vy);
     const isPrecisionWall=(i===5 || i===6); // diagonal/adjacent outer turn
     const e=isPrecisionWall?1.0:.86;
-    ball.vx-=(1+e)*vn*nx;ball.vy-=(1+e)*vn*ny;
+    ball.vx-=(1+e)*vn*nx;ball.vy-=(1+e)*vn*ny;sfxWall(impactSpeed);
    }
   }
  }
@@ -83,6 +127,7 @@ function step(dt){
 }
 function pointer(e){const r=canvas.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top}}
 canvas.addEventListener('pointerdown',e=>{
+ audioInit();if(AC&&AC.state==='suspended')AC.resume();
  if(ball.moving||ball.sunk)return;const m=pointer(e),bp=P(ball);
  if(Math.hypot(m.x-bp.x,m.y-bp.y)<34){dragging=true;dragPt=m;canvas.setPointerCapture(e.pointerId);tip.style.opacity='0'}
 });
@@ -93,7 +138,7 @@ canvas.addEventListener('pointerup',e=>{
  const max=145,p=Math.min(len,max)/max,spd=1.0+p*4.9;
  const wx=dx/len,wy=-dy/len;
  let power=inBunker()?.68:1;
- ball.vx=wx*spd*power;ball.vy=wy*spd*power;ball.moving=true;strokes++;strokeHud.textContent='杆数 '+strokes;dragPt=null;
+ ball.vx=wx*spd*power;ball.vy=wy*spd*power;sfxStrike(Math.hypot(ball.vx,ball.vy));ball.moving=true;strokes++;strokeHud.textContent='杆数 '+strokes;dragPt=null;
 });
 canvas.addEventListener('pointercancel',()=>{dragging=false;dragPt=null});
 
@@ -122,7 +167,7 @@ function drawBall(){
  if(ball.sunk)return;const p=P(ball);ctx.beginPath();ctx.arc(p.x,p.y,Math.max(6,ball.r*S),0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();ctx.lineWidth=1.4;ctx.strokeStyle='#777';ctx.stroke();
 }
 function draw(){drawCourse();drawAim();drawBall()}
-function loop(now){const dt=Math.min(.02,(now-last)/1000);last=now;for(let i=0;i<2;i++)step(dt/2);draw();requestAnimationFrame(loop)}
+function loop(now){const dt=Math.min(.02,(now-last)/1000);last=now;for(let i=0;i<2;i++)step(dt/2);updateRoll();draw();requestAnimationFrame(loop)}
 reset();requestAnimationFrame(loop);
 </script>
 </body>
