@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>迷你高尔夫 第二关 V22 · V21.1 Frozen Physics</title>
+<title>迷你高尔夫 第二关 V22.2 · Fixed Logical Canvas + V21.1 Frozen Physics</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#d9e7cf;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;touch-action:none}
 canvas{display:block;width:100vw;height:100dvh;touch-action:none}
@@ -22,7 +22,7 @@ canvas{display:block;width:100vw;height:100dvh;touch-action:none}
 <script>
 (()=>{
 const c=document.getElementById('c'),g=c.getContext('2d'),N=document.getElementById('n'),M=document.getElementById('msg');
-let W=0,H=0,D=1,S=1,ox=0,oy=0,strokes=0,won=false,drag=false,px=0,py=0,showFlag=true;
+const LOGICAL_W=390,LOGICAL_H=844; let W=LOGICAL_W,H=LOGICAL_H,D=1,S=1,ox=0,oy=0,CSSW=390,CSSH=844,VIEW_SCALE=1,VIEW_OX=0,VIEW_OY=0,strokes=0,won=false,drag=false,px=0,py=0,showFlag=true;
 let cupMode='free',cupEntrySpeed=0,cupEscapeLock=false,cupWasInside=false,cupPeakEntry=0,cupEntryFalling=0,fastCupTransit=false,fastCupCooldown=false;
 let fullStraightShot=false,crossedCupFast=false,topWallAfterFast=false;
 let ball={x:0,y:0,r:10,vx:0,vy:0,z:0,vz:0,alpha:1,scale:1},hole={x:0,y:0,r:25.3};
@@ -73,6 +73,7 @@ function rebuildGeometry(){
  const bw=WP(bunkerW);
  bunker={x:bw.x,y:bw.y,rx:bunkerW.rx*S,ry:bunkerW.ry*S};
  const tw=WP(teeW),hw=WP(holeW);
+ // V21.1 logical ball/cup size; whole scene scales only at render time.
  ball.r=Math.max(9,Math.min(12,W*.024));
  hole.r=ball.r*2.53;
  hole.x=hw.x;hole.y=hw.y;
@@ -87,9 +88,19 @@ function reset(full=true){
  M.textContent='';
  if(full){strokes=0;N.textContent='0'}
 }
-function resize(){D=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;c.width=W*D;c.height=H*D;g.setTransform(D,0,0,D,0,0);reset(false)}
+function resize(){
+ D=Math.min(devicePixelRatio||1,2);
+ CSSW=innerWidth;CSSH=innerHeight;
+ c.width=Math.round(CSSW*D);c.height=Math.round(CSSH*D);
+ VIEW_SCALE=Math.min(CSSW/LOGICAL_W,CSSH/LOGICAL_H);
+ VIEW_OX=(CSSW-LOGICAL_W*VIEW_SCALE)/2;
+ VIEW_OY=(CSSH-LOGICAL_H*VIEW_SCALE)/2;
+ W=LOGICAL_W;H=LOGICAL_H;
+ g.setTransform(D*VIEW_SCALE,0,0,D*VIEW_SCALE,D*VIEW_OX,D*VIEW_OY);
+ reset(false)
+}
 
-function pos(e){let t=e.touches?e.touches[0]:e;return{x:t.clientX,y:t.clientY}}
+function pos(e){let t=e.touches?e.touches[0]:e;return{x:(t.clientX-VIEW_OX)/VIEW_SCALE,y:(t.clientY-VIEW_OY)/VIEW_SCALE}}
 function down(e){audioInit();if(AC&&AC.state==='suspended')AC.resume();if(won||speed()>.08)return;let q=pos(e);if(Math.hypot(q.x-ball.x,q.y-ball.y)<ball.r*3){drag=true;showFlag=false;px=q.x;py=q.y;e.preventDefault()}}
 function move(e){if(!drag)return;let q=pos(e);px=q.x;py=q.y;e.preventDefault()}
 function inBunker(){const dx=(ball.x-bunker.x)/(bunker.rx||1),dy=(ball.y-bunker.y)/(bunker.ry||1);return dx*dx+dy*dy<=1}
@@ -244,7 +255,7 @@ function draw(){
    g.setLineDash([7,8]);g.strokeStyle='#fff9';g.lineWidth=2;g.beginPath();g.moveTo(ball.x,ball.y);g.lineTo(ball.x+dx*1.5,ball.y+dy*1.5);g.stroke();g.setLineDash([]);
    g.strokeStyle='#fff5';g.beginPath();g.moveTo(ball.x,ball.y);g.lineTo(px,py);g.stroke();
  }
- g.save();g.globalAlpha=ball.alpha;g.fillStyle='#fff';g.beginPath();g.arc(ball.x,ball.y,ball.r*ball.scale,0,Math.PI*2);g.fill();g.strokeStyle='#bbb';g.stroke();g.restore();
+ g.save();g.globalAlpha=ball.alpha;g.fillStyle='#fff';g.beginPath();g.arc(ball.x,ball.y,ball.r*ball.scale,0,Math.PI*2);g.fill();g.restore();
 }
 c.addEventListener('touchstart',down,{passive:false});c.addEventListener('touchmove',move,{passive:false});c.addEventListener('touchend',up,{passive:false});
 c.addEventListener('mousedown',down);addEventListener('mousemove',move);addEventListener('mouseup',up);
