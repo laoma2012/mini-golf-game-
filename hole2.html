@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Mini Golf V22 - Hole 2 Geometry Prototype</title>
+<style>
+  :root { font-family: Arial, "Microsoft YaHei", sans-serif; }
+  body { margin:0; background:#f3f3ef; color:#202020; display:flex; justify-content:center; }
+  .wrap { width:min(100%, 980px); padding:16px 16px calc(28px + env(safe-area-inset-bottom)); box-sizing:border-box; }
+  h1 { font-size:20px; margin:0 0 8px; }
+  .note { font-size:13px; line-height:1.5; margin-bottom:10px; }
+  canvas { width:100%; height:auto; background:#dfe9d3; border-radius:14px; display:block; touch-action:none; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  button { font-size:15px; padding:10px 13px; border:1px solid #aaa; border-radius:9px; background:white; cursor:pointer; min-height:44px; }
+  .readout { margin-top:10px; padding:10px 12px; background:white; border-radius:10px; font-size:14px; line-height:1.6; }
+  .ok { font-weight:700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>V22 第二关：4° → 47° 一杆线路验证原型</h1>
+  <div class="note">
+    只验证几何与反弹路线。球道纵向、右转后横向宽度均为 1.5 m；内侧转角为 90°；
+    外侧斜挡板为 47°。虚线是理论线路，按钮会按“向左 4°”真实发球。
+  </div>
+  <canvas id="c" width="940" height="720"></canvas>
+  <div class="controls">
+    <button id="test">▶ 测试：向左 4°</button>
+    <button id="reset">重置</button>
+    <button id="guide">显示/隐藏理论线</button>
+  </div>
+  <div class="readout" id="out"></div>
+</div>
+
+<script>
+const cvs = document.getElementById('c'), ctx = cvs.getContext('2d');
+const W=cvs.width,H=cvs.height;
+
+const tee = {x:0.75,y:0.50};
+const wallPivot = {x:0.0,y:5.0};
+const wallAngle = 47*Math.PI/180;
+const corridorTopY = 6.25;
+const diagEnd = {
+  x:(corridorTopY-wallPivot.y)/Math.tan(wallAngle),
+  y:corridorTopY
+};
+const poly = [
+  {x:0,y:0},
+  {x:1.5,y:0},
+  {x:1.5,y:4.75},
+  {x:7.5,y:4.75},
+  {x:7.5,y:6.25},
+  {x:diagEnd.x,y:6.25},
+  {x:0,y:5.0}
+];
+
+const incomingDeg = 94;
+const incoming = {
+  x:Math.cos(incomingDeg*Math.PI/180),
+  y:Math.sin(incomingDeg*Math.PI/180)
+};
+
+function intersectLines(p,d,q,e){
+  const cross=(a,b)=>a.x*b.y-a.y*b.x;
+  const qp={x:q.x-p.x,y:q.y-p.y};
+  const den=cross(d,e);
+  const t=cross(qp,e)/den;
+  const s=cross(qp,d)/den;
+  return {x:p.x+t*d.x,y:p.y+t*d.y,t,s};
+}
+const wallDir={x:Math.cos(wallAngle),y:Math.sin(wallAngle)};
+const hit=intersectLines(tee,incoming,wallPivot,wallDir);
+
+function reflect(v, lineAngle){
+  const nx=-Math.sin(lineAngle), ny=Math.cos(lineAngle);
+  const dot=v.x*nx+v.y*ny;
+  return {x:v.x-2*dot*nx, y:v.y-2*dot*ny};
+}
+const reflected=reflect(incoming,wallAngle);
+const reflectedDeg=(Math.atan2(reflected.y,reflected.x)*180/Math.PI+360)%360;
+const hole = {x:6.60, y: hit.y + (6.60-hit.x)*(reflected.y/reflected.x)};
+
+const margin=60;
+const sx=(W-2*margin)/7.8;
+const sy=(H-2*margin)/6.55;
+const scale=Math.min(sx,sy);
+function S(p){ return {x:margin+p.x*scale, y:H-margin-p.y*scale}; }
+
+let showGuide=true;
+const ball={x:tee.x,y:tee.y,vx:0,vy:0,r:0.075,moving:false,sunk:false};
+let status="待测试";
+let bounces=0;
+
+function reset(){
+  Object.assign(ball,{x:tee.x,y:tee.y,vx:0,vy:0,moving:false,sunk:false});
+  status="待测试"; bounces=0; draw(); updateOut();
+}
+function launch4(){
+  reset();
+  const speed=3.9;
+  ball.vx=incoming.x*speed;
+  ball.vy=incoming.y*speed;
+  ball.moving=true;
+  status="运行中";
+  updateOut();
+}
+
+function pointSegClosest(px,py,ax,ay,bx,by){
+  const abx=bx-ax, aby=by-ay;
+  let t=((px-ax)*abx+(py-ay)*aby)/(abx*abx+aby*aby);
+  t=Math.max(0,Math.min(1,t));
+  return {x:ax+t*abx,y:ay+t*aby,t};
+}
+
+function collideWalls(){
+  for(let i=0;i<poly.length;i++){
+    const a=poly[i], b=poly[(i+1)%poly.length];
+    const cp=pointSegClosest(ball.x,ball.y,a.x,a.y,b.x,b.y);
+    const dx=ball.x-cp.x, dy=ball.y-cp.y;
+    const dist=Math.hypot(dx,dy);
+    if(dist < ball.r){
+      const ex=b.x-a.x, ey=b.y-a.y, el=Math.hypot(ex,ey);
+      let nx=-ey/el, ny=ex/el;
+      const side=(ball.x-cp.x)*nx+(ball.y-cp.y)*ny;
+      if(side < 0){ nx=-nx; ny=-ny; }
+      const penetration=ball.r-dist;
+      ball.x += nx*(penetration+0.001);
+      ball.y += ny*(penetration+0.001);
+      const vn=ball.vx*nx+ball.vy*ny;
+      if(vn<0){
+        const restitution=0.88;
+        ball.vx -= (1+restitution)*vn*nx;
+        ball.vy -= (1+restitution)*vn*ny;
+        bounces++;
+      }
+    }
+  }
+}
+
+function step(dt){
+  if(!ball.moving || ball.sunk) return;
+  ball.x += ball.vx*dt;
+  ball.y += ball.vy*dt;
+  collideWalls();
+
+  const sp=Math.hypot(ball.vx,ball.vy);
+  const decel=0.28;
+  if(sp>0){
+    const ns=Math.max(0,sp-decel*dt);
+    ball.vx*=ns/sp; ball.vy*=ns/sp;
+  }
+
+  const dh=Math.hypot(ball.x-hole.x,ball.y-hole.y);
+  if(dh < 0.12 && Math.hypot(ball.vx,ball.vy)<3.6){
+    ball.sunk=true; ball.moving=false; status="一杆入洞：几何路线成立";
+    updateOut();
+  } else if(sp<0.035){
+    ball.moving=false; status="停球：未入洞";
+    updateOut();
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#dce8cf"; ctx.fillRect(0,0,W,H);
+
+  ctx.beginPath();
+  poly.forEach((p,i)=>{const q=S(p); i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y)});
+  ctx.closePath();
+  ctx.fillStyle="#78b969"; ctx.fill();
+  ctx.lineWidth=5; ctx.strokeStyle="#6f553a"; ctx.stroke();
+
+  const A=S(wallPivot), B=S(diagEnd);
+  ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(B.x,B.y);
+  ctx.strokeStyle="#a9613c"; ctx.lineWidth=10; ctx.stroke();
+
+  ctx.fillStyle="#202020"; ctx.font="16px Arial";
+  ctx.fillText("外侧 47° 反弹挡板", B.x+10, B.y+18);
+  const inner=S({x:1.5,y:4.75});
+  ctx.fillText("内侧 90°", inner.x+12, inner.y+24);
+
+  const hs=S(hole);
+  ctx.beginPath(); ctx.arc(hs.x,hs.y,0.11*scale,0,Math.PI*2);
+  ctx.fillStyle="#222"; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(hs.x,hs.y); ctx.lineTo(hs.x,hs.y-42);
+  ctx.strokeStyle="#444"; ctx.lineWidth=2; ctx.stroke();
+
+  const ts=S(tee);
+  ctx.beginPath(); ctx.arc(ts.x,ts.y,6,0,Math.PI*2); ctx.fillStyle="#eef4ff"; ctx.fill();
+
+  if(showGuide){
+    const hitS=S(hit), holeS=S(hole);
+    ctx.setLineDash([10,8]); ctx.lineWidth=3; ctx.strokeStyle="#2e5fa3";
+    ctx.beginPath(); ctx.moveTo(ts.x,ts.y); ctx.lineTo(hitS.x,hitS.y); ctx.lineTo(holeS.x,holeS.y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle="#2e5fa3"; ctx.font="15px Arial";
+    ctx.fillText("向左 4°", ts.x-78, ts.y-55);
+    ctx.fillText("理论反弹点", hitS.x+10, hitS.y-12);
+  }
+
+  if(!ball.sunk){
+    const bs=S(ball);
+    ctx.beginPath(); ctx.arc(bs.x,bs.y,ball.r*scale,0,Math.PI*2);
+    ctx.fillStyle="#fff"; ctx.fill(); ctx.strokeStyle="#777"; ctx.lineWidth=1.5; ctx.stroke();
+  }
+}
+
+function updateOut(){
+  const dx=hit.x-tee.x, dy=hit.y-tee.y;
+  const dist=Math.hypot(dx,dy);
+  document.getElementById('out').innerHTML =
+   `<span class="ok">${status}</span><br>`+
+   `理论入射：正前方左偏 4.00°　｜　斜挡板：47.00°<br>`+
+   `理论反弹方向：${reflectedDeg.toFixed(3)}°（0° = 水平向右）<br>`+
+   `理论反弹点：x=${hit.x.toFixed(3)} m，y=${hit.y.toFixed(3)} m　｜　发球点至反弹点=${dist.toFixed(3)} m<br>`+
+   `洞杯中心：x=${hole.x.toFixed(3)} m，y=${hole.y.toFixed(3)} m　｜　当前墙体碰撞次数=${bounces}`;
+}
+
+let last=performance.now();
+function loop(now){
+  const dt=Math.min(0.025,(now-last)/1000); last=now;
+  step(dt); draw();
+  requestAnimationFrame(loop);
+}
+document.getElementById('test').onclick=launch4;
+document.getElementById('reset').onclick=reset;
+document.getElementById('guide').onclick=()=>{showGuide=!showGuide;draw();};
+reset(); requestAnimationFrame(loop);
+</script>
+</body>
+</html>
